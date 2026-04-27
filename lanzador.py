@@ -1,5 +1,5 @@
 # ==========================================
-# S.A.T.A. V6.0 - COMMAND CENTER (ESMIL)
+# S.A.V.I.A. V7.0 - COMMAND CENTER (ESMIL)
 # ==========================================
 
 import tkinter as tk
@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 from PIL import Image, ImageTk
 
-# SEGURIDAD TÁCTICA S.A.T.A. v6.2
+# SEGURIDAD TÁCTICA S.A.V.I.A. v7.0
 SATA_KEY = b'cYaPITSeO2gj2QiSrLiVTVagbATv7BstuzSaAXPYD3o='
 cipher_suite = Fernet(SATA_KEY)
 PUK_MASTER = "1717171717171717" # Clave Maestra de 16 dígitos
@@ -105,7 +105,7 @@ def configurar_pin_inicial(fuerza=False):
     top.configure(bg="#1b2818")
     top.grab_set()
     
-    tk.Label(top, text="SISTEMA DE SEGURIDAD S.A.T.A.", bg="#1b2818", fg="#eeb902", font=("Helvetica", 12, "bold")).pack(pady=15)
+    tk.Label(top, text="SISTEMA DE SEGURIDAD S.A.V.I.A.", bg="#1b2818", fg="#eeb902", font=("Helvetica", 12, "bold")).pack(pady=15)
     tk.Label(top, text="Cree su PIN de Comandante (4+ dígitos):", bg="#1b2818", fg="white").pack()
     
     e1 = tk.Entry(top, show="*", justify="center", font=("Helvetica", 14), bg="#0d130d", fg="white")
@@ -381,7 +381,7 @@ class ModernButton(tk.Button):
 
 # --- CONFIGURACIÓN DE VENTANA ---
 ventana = tk.Tk()
-ventana.title("S.A.T.A. v6.0 | Comando de Operaciones (ESMIL)")
+ventana.title("S.A.V.I.A. v7.0 | Comando de Operaciones (ESMIL)")
 ventana.configure(bg="#0d130d") # Fondo ultra oscuro militar
 
 # Forzar Pantalla Completa Adaptativa
@@ -408,8 +408,8 @@ header_frame = tk.Frame(main_container, bg="#0d130d")
 header_frame.pack(pady=(0, 30))
 
 tk.Label(header_frame, text="E J É R C I T O   E C U A T O R I A N O", bg="#0d130d", fg="#eeb902", font=("Helvetica", 14, "bold")).pack()
-tk.Label(header_frame, text="S.A.T.A. COMMAND CENTER", bg="#0d130d", fg="#ffffff", font=("Helvetica", 32, "bold")).pack()
-tk.Label(header_frame, text="Sistema de Inteligencia y Vigilancia Aérea", bg="#0d130d", fg="#5c7a5c", font=("Helvetica", 12, "italic")).pack()
+tk.Label(header_frame, text="S.A.V.I.A. COMMAND CENTER", bg="#0d130d", fg="#ffffff", font=("Helvetica", 32, "bold")).pack()
+tk.Label(header_frame, text="Sistema de Asistencia Visual e Inteligencia Artificial", bg="#0d130d", fg="#5c7a5c", font=("Helvetica", 12, "italic")).pack()
 
 # Cuerpo de la Interfaz (Grid 2 columnas)
 content_frame = tk.Frame(main_container, bg="#0d130d")

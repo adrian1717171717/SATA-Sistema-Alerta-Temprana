@@ -14,7 +14,7 @@ import telemetria
 import csv
 from cryptography.fernet import Fernet
 
-# LLAVE DE CIFRADO TÁCTICO (S.A.T.A. v6.2)
+# LLAVE DE CIFRADO TÁCTICO (S.A.V.I.A. v7.0)
 SATA_KEY = b'cYaPITSeO2gj2QiSrLiVTVagbATv7BstuzSaAXPYD3o='
 cipher_suite = Fernet(SATA_KEY)
 
@@ -177,13 +177,13 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
     tiempo_anterior = 0
     alarma_silenciada_temporal = False
     silencio_global = modo_silencioso_global
-    cv2.namedWindow("S.A.T.A. - Visor de Operaciones", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.namedWindow("S.A.V.I.A. - Visor de Inteligencia Artificial", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
     # Maximizar ventana manteniendo la barra de tareas y el botón X
-    hwnd = win32gui.FindWindow(None, "S.A.T.A. - Visor de Operaciones")
+    hwnd = win32gui.FindWindow(None, "S.A.V.I.A. - Visor de Inteligencia Artificial")
     if hwnd:
         win32gui.ShowWindow(hwnd, 3) # 3 = SW_MAXIMIZE
     
-    if modo_estatico and not modo_garita: cv2.setMouseCallback("S.A.T.A. - Visor de Operaciones", seleccionar_puntos)
+    if modo_estatico and not modo_garita: cv2.setMouseCallback("S.A.V.I.A. - Visor de Inteligencia Artificial", seleccionar_puntos)
 
     telemetria_data = None
     geocerca_coords = parse_zona_gps(zona_gps) if zona_gps else None
@@ -220,7 +220,7 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
                 black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
                 msg = "[!] PERDIDA DE SENAL DE TELEMETRIA - RECONECTANDO..."
                 cv2.putText(black_frame, msg, (100, 360), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                cv2.imshow("S.A.T.A. - Visor de Operaciones", black_frame)
+                cv2.imshow("S.A.V.I.A. - Visor de Inteligencia Artificial", black_frame)
                 cv2.waitKey(2000)
                 
                 print("[!] Intentando reconectar stream...")
@@ -312,7 +312,7 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         escala = 0.45
         
         # Línea 1: Info General (Izquierda)
-        info_txt = f"S.A.T.A. v6.0 | MODELO: {modelo_ia[:6].upper()} | {int(fps)} FPS | {'GPU' if dispositivo==0 else 'CPU'}"
+        info_txt = f"S.A.V.I.A. v7.0 | MODELO: {modelo_ia[:6].upper()} | {int(fps)} FPS | {'GPU' if dispositivo==0 else 'CPU'}"
         dibujar_texto_legible(frame, info_txt, (10, 20), fuente, escala, (255, 255, 255), 1)
         
         # Línea 2: Estado (Izquierda)
@@ -334,7 +334,7 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         dibujar_texto_legible(frame, nav_txt_1, (w_proc - tw1 - 15, 20), fuente, escala, (200, 200, 200), 1)
         dibujar_texto_legible(frame, nav_txt_2, (w_proc - tw2 - 15, 42), fuente, escala, (255, 200, 0), 1)
 
-        cv2.imshow("S.A.T.A. - Visor de Operaciones", frame)
+        cv2.imshow("S.A.V.I.A. - Visor de Inteligencia Artificial", frame)
         tecla = cv2.waitKey(1) & 0xFF
         if tecla in [ord('v'), ord('V')]: 
             print("[+] Regresando al Comando Central...")
