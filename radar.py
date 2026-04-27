@@ -11,8 +11,35 @@ import win32gui
 import win32ui
 import ctypes
 import telemetria
+import csv
 
 puntos_zona = []
+
+def registrar_novedad(modo, confianza, frame):
+    """ Guarda una captura y registra la novedad en el CSV """
+    carpeta_evidencia = "Evidencia_Seguridad"
+    if not os.path.exists(carpeta_evidencia): os.makedirs(carpeta_evidencia)
+    
+    fecha_hora = datetime.now()
+    nombre_foto = f"ALERTA_{fecha_hora.strftime('%Y%m%d_%H%M%S')}.jpg"
+    ruta_foto = os.path.join(carpeta_evidencia, nombre_foto)
+    cv2.imwrite(ruta_foto, frame)
+    
+    archivo_csv = os.path.join(carpeta_evidencia, "registro_novedades.csv")
+    existe = os.path.exists(archivo_csv)
+    
+    with open(archivo_csv, mode='a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        if not existe:
+            writer.writerow(["Fecha", "Hora", "Modo de Operación", "Nivel de Confianza (%)", "Archivo de Foto"])
+        writer.writerow([
+            fecha_hora.strftime("%Y-%m-%d"),
+            fecha_hora.strftime("%H:%M:%S"),
+            modo,
+            f"{confianza}%",
+            nombre_foto
+        ])
+    print(f"[!] Registro automático completado: {nombre_foto}")
 
 class VideoStream:
     """ Clase para lectura de video multihilo (Elimina el LAG del búfer de OpenCV) """
@@ -114,7 +141,7 @@ def punto_en_poligono(point, polygon):
             inside = not inside
     return inside
 
-def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, modo_garita=False, modo_silencioso_global=False, usar_telemetria=False, sdk_url=None, zona_gps=None):
+def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, modo_garita=False, modo_silencioso_global=False, usar_telemetria=False, sdk_url=None, zona_gps=None, sensibilidad=0.6):
     carpeta_evidencia = "Evidencia_Seguridad"
     if not os.path.exists(carpeta_evidencia): os.makedirs(carpeta_evidencia)
     
@@ -164,14 +191,31 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         vs.start() # Iniciamos el hilo de lectura
 
     CLASES_INTERES = [0, 2, 3, 5, 7, 15, 16, 17, 19]
+    modo_txt = "DRON" if not modo_estatico else ("GARITA" if modo_garita else "CENTINELA")
 
     while True:
         if modo_garita:
             frame = capturar_ventana_especifica(fuente_video)
-            if frame is None: break
         else:
             exito, frame = vs.read()
-            if not exito: break
+            if not exito:
+                # RECONEXIÓN AUTOMÁTICA
+                black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+                msg = "[!] PERDIDA DE SENAL DE TELEMETRIA - RECONECTANDO..."
+                cv2.putText(black_frame, msg, (100, 360), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.imshow("S.A.T.A. - Visor de Operaciones", black_frame)
+                cv2.waitKey(2000)
+                
+                print("[!] Intentando reconectar stream...")
+                vs.release()
+                backend = cv2.CAP_FFMPEG if isinstance(fuente_video, str) else cv2.CAP_ANY
+                vs = VideoStream(fuente_video, backend)
+                if vs.ret: vs.start()
+                continue
+
+        if frame is None:
+            if modo_garita: break
+            continue
 
         # REDUCCIÓN DE RESOLUCIÓN PARA VELOCIDAD IA
         h_orig, w_orig = frame.shape[:2]
@@ -183,7 +227,7 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         
         # INFERENCIA OPTIMIZADA (FP16 si hay GPU)
         # half=True reduce el uso de memoria y acelera el proceso en RTX
-        resultados = model.track(frame, persist=True, classes=CLASES_INTERES, conf=0.5, verbose=False, device=dispositivo, half=(dispositivo == 0))
+        resultados = model.track(frame, persist=True, classes=CLASES_INTERES, conf=sensibilidad, verbose=False, device=dispositivo, half=(dispositivo == 0))
 
         total_personas, intrusos, amenaza_critica = 0, 0, False
         
@@ -215,10 +259,25 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
                     cv2.rectangle(frame, (x1, y1), (x2, y2), col, 2)
                     dibujar_texto_legible(frame, f"{tipo} {conf}%", (x1, y1 - 10), cv2.FONT_HERSHEY_DUPLEX, 0.6, col, 1)
 
-        # Alarmas asíncronas
-        if amenaza_critica and not silencio_global and not alarma_silenciada_temporal:
-            threading.Thread(target=sonar_alarma, daemon=True).start()
-            alarma_silenciada_temporal = True 
+        # Alarmas asíncronas y Registro de Evidencia
+        if amenaza_critica:
+            if not silencio_global and not alarma_silenciada_temporal:
+                threading.Thread(target=sonar_alarma, daemon=True).start()
+                alarma_silenciada_temporal = True 
+            
+            # MÓDULO DE BITÁCORA AUTOMÁTICA (Cooldown 15s)
+            if time.time() - ultimo_guardado > 15:
+                # Buscar confianza máxima entre intrusos
+                conf_max = 0
+                for r in resultados:
+                    if r.boxes:
+                        for b in r.boxes:
+                            if int(b.cls[0]) == 0:
+                                c = int(b.conf[0] * 100)
+                                if c > conf_max: conf_max = c
+                
+                threading.Thread(target=registrar_novedad, args=(modo_txt, conf_max, frame.copy()), daemon=True).start()
+                ultimo_guardado = time.time()
         elif not amenaza_critica: alarma_silenciada_temporal = False
 
         # HUD TÁCTICO MINIMALISTA - Panel Superior Pequeño

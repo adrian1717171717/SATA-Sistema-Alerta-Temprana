@@ -104,7 +104,8 @@ def iniciar_mision():
     usar_telemetria = var_telemetria.get()
     sdk_url = entry_sdk_url.get().strip()
     zona_gps = entry_geocerca.get().strip()
-    
+    sensibilidad_ia = var_sensibilidad.get() / 100.0 # Convertir a 0.4 - 0.9
+
     # Mapeo de modelos
     mapa_modelos = {
         "SMALL (Máxima Velocidad)": "yolov8n.pt",
@@ -152,7 +153,8 @@ def iniciar_mision():
             modo_silencioso_global=modo_silencioso,
             usar_telemetria=usar_telemetria,
             sdk_url=sdk_url,
-            zona_gps=zona_gps
+            zona_gps=zona_gps,
+            sensibilidad=sensibilidad_ia
         )
     finally:
         ventana.deiconify()
@@ -254,6 +256,11 @@ tk.Label(marco_ia, text="Tamaño del Modelo IA:", bg="#0d130d", fg="#aebfbe", fo
 combo_modelo = ttk.Combobox(marco_ia, values=["SMALL (Máxima Velocidad)", "MEDIUM (Equilibrio Operativo)", "LARGE (Máxima Precisión)"], state="readonly", width=45)
 combo_modelo.current(0)
 combo_modelo.pack(pady=5)
+
+tk.Label(marco_ia, text="Sensibilidad de Detección (%):", bg="#0d130d", fg="#aebfbe", font=("Helvetica", 9)).pack(anchor="w", pady=(10, 0))
+var_sensibilidad = tk.DoubleVar(value=60)
+scale_sens = tk.Scale(marco_ia, from_=40, to=90, variable=var_sensibilidad, orient="horizontal", bg="#0d130d", fg="#eeb902", troughcolor="#1b2818", highlightthickness=0, relief="flat", font=("Helvetica", 9, "bold"), activebackground="#eeb902")
+scale_sens.pack(fill="x", pady=5)
 
 var_silencio = tk.BooleanVar(value=False)
 tk.Checkbutton(marco_ia, text="Modo Silencioso (Sin Alarmas)", variable=var_silencio, bg="#0d130d", fg="#ffffff", selectcolor="#4b6043", activebackground="#0d130d", font=("Helvetica", 10)).pack(anchor="w", pady=5)
