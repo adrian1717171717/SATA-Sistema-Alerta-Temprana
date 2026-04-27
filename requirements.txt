@@ -1,0 +1,20 @@
+# S.A.T.A. v6.0 - Dependencias
+# Instalación: pip install -r requirements.txt
+
+# Core
+ultralytics
+opencv-python
+numpy
+torch
+torchvision
+torchaudio
+
+# UI and OS
+psutil
+pywin32
+
+# Telemetry (Opcional si se usa MAVSDK)
+mavsdk
+
+# --- OPCIONAL: Para GPU Universal (AMD/Intel/NVIDIA) ---
+# onnxruntime-directml

@@ -1,0 +1,9 @@
+# Entorno virtual y temporales
+.venv/
+__pycache__/
+
+# Evidencias tácticas locales
+Evidencia_Seguridad/
+
+# Archivos pesados de IA (YOLO los descarga solo si faltan)
+*.pt
