@@ -12,18 +12,30 @@ import win32ui
 import ctypes
 import telemetria
 import csv
+from cryptography.fernet import Fernet
+
+# LLAVE DE CIFRADO TÁCTICO (S.A.T.A. v6.2)
+SATA_KEY = b'cYaPITSeO2gj2QiSrLiVTVagbATv7BstuzSaAXPYD3o='
+cipher_suite = Fernet(SATA_KEY)
 
 puntos_zona = []
 
 def registrar_novedad(modo, confianza, frame):
-    """ Guarda una captura y registra la novedad en el CSV """
+    """ Guarda una captura CIFRADA y registra la novedad en el CSV """
     carpeta_evidencia = "Evidencia_Seguridad"
     if not os.path.exists(carpeta_evidencia): os.makedirs(carpeta_evidencia)
     
     fecha_hora = datetime.now()
-    nombre_foto = f"ALERTA_{fecha_hora.strftime('%Y%m%d_%H%M%S')}.jpg"
+    nombre_foto = f"ALERTA_{fecha_hora.strftime('%Y%m%d_%H%M%S')}.sata_enc"
     ruta_foto = os.path.join(carpeta_evidencia, nombre_foto)
-    cv2.imwrite(ruta_foto, frame)
+    
+    # CIFRADO DE IMAGEN EN MEMORIA
+    exito, buffer = cv2.imencode('.jpg', frame)
+    if exito:
+        img_bytes = buffer.tobytes()
+        img_encriptada = cipher_suite.encrypt(img_bytes)
+        with open(ruta_foto, 'wb') as f:
+            f.write(img_encriptada)
     
     archivo_csv = os.path.join(carpeta_evidencia, "registro_novedades.csv")
     existe = os.path.exists(archivo_csv)
@@ -39,7 +51,7 @@ def registrar_novedad(modo, confianza, frame):
             f"{confianza}%",
             nombre_foto
         ])
-    print(f"[!] Registro automático completado: {nombre_foto}")
+    print(f"[!] Registro táctico cifrado completado: {nombre_foto}")
 
 class VideoStream:
     """ Clase para lectura de video multihilo (Elimina el LAG del búfer de OpenCV) """
