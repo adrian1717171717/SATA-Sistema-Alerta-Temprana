@@ -7,3 +7,5 @@ Evidencia_Seguridad/
 
 # Archivos pesados de IA (YOLO los descarga solo si faltan)
 *.pt
+# Autenticacion local (PIN)
+.sata_auth

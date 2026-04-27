@@ -48,7 +48,7 @@ def registrar_novedad(modo, confianza, frame):
             fecha_hora.strftime("%Y-%m-%d"),
             fecha_hora.strftime("%H:%M:%S"),
             modo,
-            f"{confianza}%",
+            f"{confianza}%" if isinstance(confianza, (int, float)) else str(confianza),
             nombre_foto
         ])
     print(f"[!] Registro táctico cifrado completado: {nombre_foto}")
@@ -316,8 +316,11 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         dibujar_texto_legible(frame, f"ESTADO: {estado_txt} | OBJETIVOS: {intrusos}", (10, 42), fuente, escala, color_estado, 1)
 
         # Instrucciones de Navegación (Derecha)
-        nav_txt_1 = "[V] MENU  |  [Q] SALIR"
-        nav_txt_2 = "[M] SILENCIAR"
+        nav_txt_1 = "[C] FOTO MANUAL | [V] MENU | [Q] SALIR"
+        if modo_estatico and not modo_garita:
+            nav_txt_2 = "[M] SILENCIAR | [Click Izq] ZONA | [Click Der] BORRAR"
+        else:
+            nav_txt_2 = "[M] SILENCIAR ALARMAS"
         
         # Calcular ancho del texto para alinear a la derecha
         (tw1, _), _ = cv2.getTextSize(nav_txt_1, fuente, escala, 1)
@@ -334,6 +337,8 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         elif tecla in [ord('q'), ord('Q')]: 
             print("[!] Cierre de emergencia solicitado.")
             os._exit(0)
+        elif tecla in [ord('c'), ord('C')]:
+            threading.Thread(target=registrar_novedad, args=(modo_txt, "MANUAL", frame.copy()), daemon=True).start()
         elif tecla in [ord('m'), ord('M')]: 
             silencio_global = not silencio_global
             print(f"[+] Silencio Global: {'ON' if silencio_global else 'OFF'}")
