@@ -3,7 +3,7 @@
 # ==========================================
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import socket
 import subprocess
 import os
@@ -74,15 +74,30 @@ def solicitar_pin(callback, titulo="CONTROL DE ACCESO"):
             
         if hash_pin(p) == pin_guardado or p == PUK_MASTER:
             top.destroy()
+            if p == PUK_MASTER:
+                messagebox.showinfo("PUK ACEPTADO", "Clave Maestra ingresada correctamente. Por favor, reconfigure su PIN.")
+                configurar_pin_inicial(fuerza=True)
             callback()
         else:
-            messagebox.showerror("ACCESO DENEGADO", "PIN Incorrecto.\nEn caso de olvido, use CÓDIGO PUK (Clave Maestra de 16 dígitos).")
+            messagebox.showerror("ACCESO DENEGADO", "PIN Incorrecto.")
+            
+    def usar_puk():
+        puk_in = simpledialog.askstring("RECUPERACIÓN PUK", "Ingrese los 16 dígitos del código PUK:", show="*", parent=top)
+        if puk_in == PUK_MASTER:
+            top.destroy()
+            messagebox.showinfo("PUK ACEPTADO", "Clave Maestra ingresada correctamente. Por favor, reconfigure su PIN.")
+            configurar_pin_inicial(fuerza=True)
+            callback()
+        elif puk_in:
+            messagebox.showerror("ERROR", "Código PUK incorrecto.")
 
     ModernButton(top, text="AUTENTICAR", command=verificar, width=20).pack(pady=10)
+    tk.Button(top, text="Olvidé mi PIN (Usar PUK)", bg="#1b2818", fg="#aebfbe", font=("Helvetica", 9, "underline"), relief="flat", cursor="hand2", activebackground="#1b2818", activeforeground="white", command=usar_puk).pack(pady=5)
 
-def configurar_pin_inicial():
-    """ Obliga a crear un PIN en el primer inicio """
-    if os.path.exists(AUTH_FILE): return
+
+def configurar_pin_inicial(fuerza=False):
+    """ Obliga a crear un PIN en el primer inicio o tras usar el PUK """
+    if os.path.exists(AUTH_FILE) and not fuerza: return
     
     top = tk.Toplevel(ventana)
     top.title("CONFIGURACIÓN INICIAL OPSEC")
@@ -342,6 +357,10 @@ def iniciar_mision():
         )
     finally:
         ventana.deiconify()
+        try:
+            ventana.state('zoomed')
+        except:
+            ventana.attributes('-fullscreen', True)
         actualizar_ventanas()
 
 # --- CLASES DE INTERFAZ MODERNA ---
@@ -471,6 +490,12 @@ actions_frame.pack(pady=30, fill="x")
 
 btn_boveda = ModernButton(actions_frame, text="🔒 VISOR DE INTELIGENCIA (BÓVEDA)", bg="#4b6043", fg="white", hover_bg="#5c7a5c", font=("Helvetica", 12, "bold"), command=lambda: solicitar_pin(abrir_boveda, "ACCESO A BÓVEDA TÁCTICA"))
 btn_boveda.pack(side="top", fill="x", padx=100, pady=10)
+
+def proceso_cambiar_pin():
+    configurar_pin_inicial(fuerza=True)
+
+btn_cambiar_pin = ModernButton(actions_frame, text="⚙️ CAMBIAR PIN DE COMANDANTE", bg="#1b2818", fg="white", hover_bg="#2c3e2c", font=("Helvetica", 10, "bold"), command=lambda: solicitar_pin(proceso_cambiar_pin, "AUTORIZAR CAMBIO DE PIN"))
+btn_cambiar_pin.pack(side="top", fill="x", padx=100, pady=5)
 
 btn_iniciar = ModernButton(actions_frame, text="🚀 DESPLEGAR SISTEMA", bg="#eeb902", fg="#0d130d", font=("Helvetica", 16, "bold"), command=iniciar_mision)
 btn_iniciar.pack(side="top", fill="x", padx=100, pady=5)

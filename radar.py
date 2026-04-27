@@ -177,7 +177,8 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
     tiempo_anterior = 0
     alarma_silenciada_temporal = False
     silencio_global = modo_silencioso_global
-    cv2.namedWindow("S.A.T.A. - Visor de Operaciones", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("S.A.T.A. - Visor de Operaciones", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.setWindowProperty("S.A.T.A. - Visor de Operaciones", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     if modo_estatico and not modo_garita: cv2.setMouseCallback("S.A.T.A. - Visor de Operaciones", seleccionar_puntos)
 
     telemetria_data = None
