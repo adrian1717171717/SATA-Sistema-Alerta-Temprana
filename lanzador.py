@@ -145,7 +145,8 @@ def abrir_boveda():
     def cargar_lista():
         lista_archivos.delete(0, "end")
         if not os.path.exists("Evidencia_Seguridad"): return
-        archivos = [f for f in os.listdir("Evidencia_Seguridad") if f.endswith(".sata_enc")]
+        # Permitir tanto archivos cifrados como antiguos (jpg, png)
+        archivos = [f for f in os.listdir("Evidencia_Seguridad") if f.lower().endswith((".sata_enc", ".jpg", ".png"))]
         for f in archivos: lista_archivos.insert("end", f)
 
     def visualizar(event):
@@ -155,11 +156,14 @@ def abrir_boveda():
         ruta = os.path.join("Evidencia_Seguridad", nombre)
         
         try:
-            with open(ruta, "rb") as f:
-                datos_encriptados = f.read()
-            
-            datos_desencriptados = cipher_suite.decrypt(datos_encriptados)
-            img = Image.open(io.BytesIO(datos_desencriptados))
+            if nombre.lower().endswith(".sata_enc"):
+                with open(ruta, "rb") as f:
+                    datos_encriptados = f.read()
+                datos_desencriptados = cipher_suite.decrypt(datos_encriptados)
+                img = Image.open(io.BytesIO(datos_desencriptados))
+            else:
+                # Carga normal para archivos antiguos
+                img = Image.open(ruta)
             
             # Redimensionar para el visor
             w_visor = frame_visor.winfo_width() - 100
@@ -174,7 +178,7 @@ def abrir_boveda():
             label_img.image = photo
             btn_mover.configure(state="normal", command=lambda: clasificar_evidencia(nombre))
         except Exception as e:
-            messagebox.showerror("ERROR DE CIFRADO", f"No se pudo desencriptar el archivo.\n{e}")
+            messagebox.showerror("ERROR DE ACCESO", f"No se pudo cargar el archivo.\n{e}")
 
     def clasificar_evidencia(nombre):
         dest = "Evidencia_Clasificada"
