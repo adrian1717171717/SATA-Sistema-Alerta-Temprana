@@ -178,7 +178,11 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
     alarma_silenciada_temporal = False
     silencio_global = modo_silencioso_global
     cv2.namedWindow("S.A.T.A. - Visor de Operaciones", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-    cv2.setWindowProperty("S.A.T.A. - Visor de Operaciones", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    # Maximizar ventana manteniendo la barra de tareas y el botón X
+    hwnd = win32gui.FindWindow(None, "S.A.T.A. - Visor de Operaciones")
+    if hwnd:
+        win32gui.ShowWindow(hwnd, 3) # 3 = SW_MAXIMIZE
+    
     if modo_estatico and not modo_garita: cv2.setMouseCallback("S.A.T.A. - Visor de Operaciones", seleccionar_puntos)
 
     telemetria_data = None
