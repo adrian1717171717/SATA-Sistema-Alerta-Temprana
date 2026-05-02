@@ -341,7 +341,7 @@ main_container.place(relx=0.5, rely=0.5, anchor="center")
 header_frame = tk.Frame(main_container, bg="#050805")
 header_frame.pack(pady=(0, 20))
 
-tk.Label(header_frame, text="S I S T E M A   C E N T I N E L A", bg="#050805", fg="#00ffcc", font=("Segoe UI", 12, "bold", "tracking")).pack()
+tk.Label(header_frame, text="S I S T E M A   C E N T I N E L A", bg="#050805", fg="#00ffcc", font=("Segoe UI", 12, "bold")).pack()
 tk.Label(header_frame, text="S.A.V.I.A. COMMAND CENTER", bg="#050805", fg="#ffffff", font=("Segoe UI", 36, "bold")).pack()
 tk.Label(header_frame, text="Sistema de Asistencia Visual e Inteligencia Artificial", bg="#050805", fg="#4b6043", font=("Segoe UI", 12, "italic")).pack(pady=(0, 10))
 

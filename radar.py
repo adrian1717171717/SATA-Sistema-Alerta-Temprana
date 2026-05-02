@@ -224,13 +224,27 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
             if modo_garita: break
             continue
 
-        # REDUCCIÓN DE RESOLUCIÓN PARA VELOCIDAD IA
+        # AJUSTE DE RESOLUCIÓN Y FORMATO DE CÁMARA (1280x720) SIN ESTIRAR
         h_orig, w_orig = frame.shape[:2]
-        if w_orig > 1024:
-            scale = 1024 / w_orig
-            frame = cv2.resize(frame, (0,0), fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+        canvas_w, canvas_h = 1280, 720
+        aspect = w_orig / h_orig
+        target_aspect = canvas_w / canvas_h
         
-        h_proc, w_proc = frame.shape[:2]
+        if aspect > target_aspect:
+            new_w = canvas_w
+            new_h = int(canvas_w / aspect)
+        else:
+            new_h = canvas_h
+            new_w = int(canvas_h * aspect)
+            
+        frame_resized = cv2.resize(frame, (new_w, new_h))
+        frame_padded = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+        y_offset = (canvas_h - new_h) // 2
+        x_offset = (canvas_w - new_w) // 2
+        frame_padded[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = frame_resized
+        
+        frame = frame_padded
+        h_proc, w_proc = 720, 1280
         
         # INFERENCIA OPTIMIZADA (FP16 si hay GPU)
         # half=True reduce el uso de memoria y acelera el proceso en RTX
@@ -289,7 +303,7 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
 
         # HUD TÁCTICO MINIMALISTA - Panel Superior Pequeño
         panel = frame.copy()
-        alto_panel = 55
+        alto_panel = 80
         cv2.rectangle(panel, (0, 0), (w_proc, alto_panel), (10, 15, 10), -1)
         cv2.addWeighted(panel, 0.85, frame, 0.15, 0, frame)
 
@@ -299,16 +313,16 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         
         # Estilo Minimalista
         fuente = cv2.FONT_HERSHEY_SIMPLEX
-        escala = 0.45
+        escala = 0.65
         
         # Línea 1: Info General (Izquierda)
         info_txt = f"SISTEMA CENTINELA | MODO: {modo_txt} | MODELO: {modelo_ia} | {int(fps)} FPS"
-        dibujar_texto_legible(frame, info_txt, (15, 25), fuente, escala, (204, 255, 0), 1) # Cyan-ish/Neon Green
+        dibujar_texto_legible(frame, info_txt, (20, 30), fuente, escala, (204, 255, 0), 1) # Cyan-ish/Neon Green
         
         # Línea 2: Estado (Izquierda)
         estado_txt = "ALERTA CRITICA - INTRUSO DETECTADO" if amenaza_critica else "SISTEMA OPERATIVO Y VIGILANDO"
         color_estado = (0, 0, 255) if amenaza_critica else (0, 255, 204) # Neon Green when ok, Red when threat
-        dibujar_texto_legible(frame, f"ESTADO: {estado_txt} | OBJETIVOS: {intrusos}", (15, 47), fuente, escala, color_estado, 1)
+        dibujar_texto_legible(frame, f"ESTADO: {estado_txt} | OBJETIVOS: {intrusos}", (20, 65), fuente, escala, color_estado, 1)
 
         # Instrucciones de Navegación (Derecha)
         nav_txt_1 = "[C] FOTO MANUAL | [V] MENU | [Q] SALIR"
@@ -321,8 +335,8 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         (tw1, _), _ = cv2.getTextSize(nav_txt_1, fuente, escala, 1)
         (tw2, _), _ = cv2.getTextSize(nav_txt_2, fuente, escala, 1)
         
-        dibujar_texto_legible(frame, nav_txt_1, (w_proc - tw1 - 15, 25), fuente, escala, (200, 200, 200), 1)
-        dibujar_texto_legible(frame, nav_txt_2, (w_proc - tw2 - 15, 47), fuente, escala, (0, 204, 255), 1)
+        dibujar_texto_legible(frame, nav_txt_1, (w_proc - tw1 - 20, 30), fuente, escala, (200, 200, 200), 1)
+        dibujar_texto_legible(frame, nav_txt_2, (w_proc - tw2 - 20, 65), fuente, escala, (0, 204, 255), 1)
 
         cv2.imshow("S.A.V.I.A. - Visor de Inteligencia Artificial", frame)
         tecla = cv2.waitKey(1) & 0xFF
