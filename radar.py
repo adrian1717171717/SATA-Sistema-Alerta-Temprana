@@ -12,30 +12,20 @@ import win32ui
 import ctypes
 import telemetria
 import csv
-from cryptography.fernet import Fernet
-
-# LLAVE DE CIFRADO TÁCTICO (S.A.V.I.A. v7.0)
-SATA_KEY = b'cYaPITSeO2gj2QiSrLiVTVagbATv7BstuzSaAXPYD3o='
-cipher_suite = Fernet(SATA_KEY)
 
 puntos_zona = []
 
 def registrar_novedad(modo, confianza, frame):
-    """ Guarda una captura CIFRADA y registra la novedad en el CSV """
+    """ Guarda una captura estándar y registra la novedad en el CSV """
     carpeta_evidencia = "Evidencia_Seguridad"
     if not os.path.exists(carpeta_evidencia): os.makedirs(carpeta_evidencia)
     
     fecha_hora = datetime.now()
-    nombre_foto = f"ALERTA_{fecha_hora.strftime('%Y%m%d_%H%M%S')}.sata_enc"
+    nombre_foto = f"ALERTA_{fecha_hora.strftime('%Y%m%d_%H%M%S')}.jpg"
     ruta_foto = os.path.join(carpeta_evidencia, nombre_foto)
     
-    # CIFRADO DE IMAGEN EN MEMORIA
-    exito, buffer = cv2.imencode('.jpg', frame)
-    if exito:
-        img_bytes = buffer.tobytes()
-        img_encriptada = cipher_suite.encrypt(img_bytes)
-        with open(ruta_foto, 'wb') as f:
-            f.write(img_encriptada)
+    # GUARDADO DE IMAGEN
+    cv2.imwrite(ruta_foto, frame)
     
     archivo_csv = os.path.join(carpeta_evidencia, "registro_novedades.csv")
     existe = os.path.exists(archivo_csv)
@@ -312,13 +302,13 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         escala = 0.45
         
         # Línea 1: Info General (Izquierda)
-        info_txt = f"S.A.V.I.A. v7.0 | MODELO: {modelo_ia[:6].upper()} | {int(fps)} FPS | {'GPU' if dispositivo==0 else 'CPU'}"
-        dibujar_texto_legible(frame, info_txt, (10, 20), fuente, escala, (255, 255, 255), 1)
+        info_txt = f"SISTEMA CENTINELA | MODO: {modo_txt} | MODELO: {modelo_ia} | {int(fps)} FPS"
+        dibujar_texto_legible(frame, info_txt, (15, 25), fuente, escala, (204, 255, 0), 1) # Cyan-ish/Neon Green
         
         # Línea 2: Estado (Izquierda)
-        estado_txt = "ALERTA CRITICA" if amenaza_critica else "OPERATIVO"
-        color_estado = (0, 0, 255) if amenaza_critica else (0, 255, 0)
-        dibujar_texto_legible(frame, f"ESTADO: {estado_txt} | OBJETIVOS: {intrusos}", (10, 42), fuente, escala, color_estado, 1)
+        estado_txt = "ALERTA CRITICA - INTRUSO DETECTADO" if amenaza_critica else "SISTEMA OPERATIVO Y VIGILANDO"
+        color_estado = (0, 0, 255) if amenaza_critica else (0, 255, 204) # Neon Green when ok, Red when threat
+        dibujar_texto_legible(frame, f"ESTADO: {estado_txt} | OBJETIVOS: {intrusos}", (15, 47), fuente, escala, color_estado, 1)
 
         # Instrucciones de Navegación (Derecha)
         nav_txt_1 = "[C] FOTO MANUAL | [V] MENU | [Q] SALIR"
@@ -331,8 +321,8 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
         (tw1, _), _ = cv2.getTextSize(nav_txt_1, fuente, escala, 1)
         (tw2, _), _ = cv2.getTextSize(nav_txt_2, fuente, escala, 1)
         
-        dibujar_texto_legible(frame, nav_txt_1, (w_proc - tw1 - 15, 20), fuente, escala, (200, 200, 200), 1)
-        dibujar_texto_legible(frame, nav_txt_2, (w_proc - tw2 - 15, 42), fuente, escala, (255, 200, 0), 1)
+        dibujar_texto_legible(frame, nav_txt_1, (w_proc - tw1 - 15, 25), fuente, escala, (200, 200, 200), 1)
+        dibujar_texto_legible(frame, nav_txt_2, (w_proc - tw2 - 15, 47), fuente, escala, (0, 204, 255), 1)
 
         cv2.imshow("S.A.V.I.A. - Visor de Inteligencia Artificial", frame)
         tecla = cv2.waitKey(1) & 0xFF

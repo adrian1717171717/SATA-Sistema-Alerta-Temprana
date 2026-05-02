@@ -3,7 +3,7 @@
 # ==========================================
 
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 import socket
 import subprocess
 import os
@@ -12,156 +12,56 @@ import win32gui
 import psutil
 import radar
 import telemetria
-import hashlib
 import io
+import glob
 from datetime import datetime, timedelta
-from cryptography.fernet import Fernet
 from PIL import Image, ImageTk
 
-# SEGURIDAD TÁCTICA S.A.V.I.A. v7.0
-SATA_KEY = b'cYaPITSeO2gj2QiSrLiVTVagbATv7BstuzSaAXPYD3o='
-cipher_suite = Fernet(SATA_KEY)
-PUK_MASTER = "1717171717171717" # Clave Maestra de 16 dígitos
-AUTH_FILE = ".sata_auth"
-
-def hash_pin(pin):
-    return hashlib.sha256(pin.encode()).hexdigest()
-
 def limpiar_evidencia_antigua():
-    """ Elimina archivos .sata_enc de más de 5 días """
+    """ Elimina archivos de evidencia de más de 5 días """
     carpeta = "Evidencia_Seguridad"
     if not os.path.exists(carpeta): return
     ahora = time.time()
     limite = ahora - (5 * 24 * 3600)
     for f in os.listdir(carpeta):
-        if f.endswith(".sata_enc"):
+        if f.startswith("ALERTA_") and f.endswith((".jpg", ".png", ".sata_enc")):
             path = os.path.join(carpeta, f)
             if os.path.getmtime(path) < limite:
                 try: os.remove(path)
                 except: pass
-
-def solicitar_pin(callback, titulo="CONTROL DE ACCESO"):
-    """ Ventana de autenticación para acciones críticas """
-    top = tk.Toplevel(ventana)
-    top.title(titulo)
-    top.geometry("400x250")
-    top.configure(bg="#1b2818")
-    top.resizable(False, False)
-    top.grab_set()
-    
-    # Centrar
-    top.update_idletasks()
-    w, h = 400, 250
-    x = (top.winfo_screenwidth() // 2) - (w // 2)
-    y = (top.winfo_screenheight() // 2) - (h // 2)
-    top.geometry(f"{w}x{h}+{x}+{y}")
-
-    tk.Label(top, text="INGRESE PIN DE COMANDANTE", bg="#1b2818", fg="#eeb902", font=("Helvetica", 10, "bold")).pack(pady=20)
-    
-    entry_pin = tk.Entry(top, show="*", justify="center", font=("Helvetica", 18, "bold"), bg="#0d130d", fg="white", width=15)
-    entry_pin.pack(pady=10)
-    entry_pin.focus()
-
-    def verificar():
-        p = entry_pin.get()
-        if not os.path.exists(AUTH_FILE):
-            messagebox.showerror("ERROR", "Sistema no inicializado.")
-            top.destroy()
-            return
-            
-        with open(AUTH_FILE, "r") as f:
-            pin_guardado = f.read().strip()
-            
-        if hash_pin(p) == pin_guardado or p == PUK_MASTER:
-            top.destroy()
-            if p == PUK_MASTER:
-                messagebox.showinfo("PUK ACEPTADO", "Clave Maestra ingresada correctamente. Por favor, reconfigure su PIN.")
-                configurar_pin_inicial(fuerza=True)
-            callback()
-        else:
-            messagebox.showerror("ACCESO DENEGADO", "PIN Incorrecto.")
-            
-    def usar_puk():
-        puk_in = simpledialog.askstring("RECUPERACIÓN PUK", "Ingrese los 16 dígitos del código PUK:", show="*", parent=top)
-        if puk_in == PUK_MASTER:
-            top.destroy()
-            messagebox.showinfo("PUK ACEPTADO", "Clave Maestra ingresada correctamente. Por favor, reconfigure su PIN.")
-            configurar_pin_inicial(fuerza=True)
-            callback()
-        elif puk_in:
-            messagebox.showerror("ERROR", "Código PUK incorrecto.")
-
-    ModernButton(top, text="AUTENTICAR", command=verificar, width=20).pack(pady=10)
-    tk.Button(top, text="Olvidé mi PIN (Usar PUK)", bg="#1b2818", fg="#aebfbe", font=("Helvetica", 9, "underline"), relief="flat", cursor="hand2", activebackground="#1b2818", activeforeground="white", command=usar_puk).pack(pady=5)
-
-
-def configurar_pin_inicial(fuerza=False):
-    """ Obliga a crear un PIN en el primer inicio o tras usar el PUK """
-    if os.path.exists(AUTH_FILE) and not fuerza: return
-    
-    top = tk.Toplevel(ventana)
-    top.title("CONFIGURACIÓN INICIAL OPSEC")
-    top.geometry("400x300")
-    top.configure(bg="#1b2818")
-    top.grab_set()
-    
-    tk.Label(top, text="SISTEMA DE SEGURIDAD S.A.V.I.A.", bg="#1b2818", fg="#eeb902", font=("Helvetica", 12, "bold")).pack(pady=15)
-    tk.Label(top, text="Cree su PIN de Comandante (4+ dígitos):", bg="#1b2818", fg="white").pack()
-    
-    e1 = tk.Entry(top, show="*", justify="center", font=("Helvetica", 14), bg="#0d130d", fg="white")
-    e1.pack(pady=5)
-    
-    tk.Label(top, text="Confirme su PIN:", bg="#1b2818", fg="white").pack()
-    e2 = tk.Entry(top, show="*", justify="center", font=("Helvetica", 14), bg="#0d130d", fg="white")
-    e2.pack(pady=5)
-
-    def guardar():
-        p1, p2 = e1.get(), e2.get()
-        if len(p1) < 4:
-            messagebox.showwarning("DÉBIL", "El PIN debe tener al menos 4 dígitos.")
-            return
-        if p1 == p2:
-            with open(AUTH_FILE, "w") as f:
-                f.write(hash_pin(p1))
-            messagebox.showinfo("ÉXITO", "PIN de Comandante establecido correctamente.")
-            top.destroy()
-        else:
-            messagebox.showerror("ERROR", "Los PINs no coinciden.")
-
-    ModernButton(top, text="ESTABLECER PIN", command=guardar).pack(pady=20)
 
 def abrir_boveda():
     """ Ventana del Visor de Inteligencia """
     top = tk.Toplevel(ventana)
     top.title("V.I.B. - VISOR DE INTELIGENCIA (BÓVEDA)")
     top.state('zoomed')
-    top.configure(bg="#0d130d")
+    top.configure(bg="#0a0f0a")
     
     # Layout: Panel Izquierdo (Lista) | Panel Derecho (Imagen)
-    paned = tk.PanedWindow(top, orient="horizontal", bg="#1b2818", sashwidth=4)
+    paned = tk.PanedWindow(top, orient="horizontal", bg="#152015", sashwidth=4)
     paned.pack(fill="both", expand=True)
     
-    frame_lista = tk.Frame(paned, bg="#1b2818", width=300)
-    frame_visor = tk.Frame(paned, bg="#0d130d")
+    frame_lista = tk.Frame(paned, bg="#152015", width=300)
+    frame_visor = tk.Frame(paned, bg="#0a0f0a")
     paned.add(frame_lista)
     paned.add(frame_visor)
     
-    tk.Label(frame_lista, text="EVIDENCIAS TÁCTICAS", bg="#1b2818", fg="#eeb902", font=("Helvetica", 10, "bold")).pack(pady=10)
+    tk.Label(frame_lista, text="EVIDENCIAS TÁCTICAS", bg="#152015", fg="#00ffcc", font=("Segoe UI", 12, "bold")).pack(pady=15)
     
-    lista_archivos = tk.Listbox(frame_lista, bg="#0d130d", fg="white", font=("Consolas", 10), borderwidth=0)
-    lista_archivos.pack(fill="both", expand=True, padx=5, pady=5)
+    # Mejorar lista visual
+    lista_archivos = tk.Listbox(frame_lista, bg="#0a0f0a", fg="#aebfbe", selectbackground="#00ffcc", selectforeground="#0a0f0a", font=("Consolas", 10), borderwidth=0, highlightthickness=1, highlightcolor="#00ffcc", highlightbackground="#223322")
+    lista_archivos.pack(fill="both", expand=True, padx=10, pady=5)
     
-    label_img = tk.Label(frame_visor, bg="#0d130d")
+    label_img = tk.Label(frame_visor, bg="#0a0f0a")
     label_img.pack(fill="both", expand=True, padx=20, pady=20)
     
-    btn_mover = ModernButton(frame_visor, text="📁 MOVER A BÓVEDA CLASIFICADA", bg="#eeb902", state="disabled")
+    btn_mover = ModernButton(frame_visor, text="📁 MOVER A BÓVEDA CLASIFICADA", bg="#00ffcc", fg="#0a0f0a", hover_bg="#00ccaa", state="disabled")
     btn_mover.pack(pady=10)
 
     def cargar_lista():
         lista_archivos.delete(0, "end")
         if not os.path.exists("Evidencia_Seguridad"): return
-        # Permitir tanto archivos cifrados como antiguos (jpg, png)
-        archivos = [f for f in os.listdir("Evidencia_Seguridad") if f.lower().endswith((".sata_enc", ".jpg", ".png"))]
+        archivos = sorted([f for f in os.listdir("Evidencia_Seguridad") if f.lower().endswith((".jpg", ".png"))], reverse=True)
         for f in archivos: lista_archivos.insert("end", f)
 
     def visualizar(event):
@@ -171,14 +71,7 @@ def abrir_boveda():
         ruta = os.path.join("Evidencia_Seguridad", nombre)
         
         try:
-            if nombre.lower().endswith(".sata_enc"):
-                with open(ruta, "rb") as f:
-                    datos_encriptados = f.read()
-                datos_desencriptados = cipher_suite.decrypt(datos_encriptados)
-                img = Image.open(io.BytesIO(datos_desencriptados))
-            else:
-                # Carga normal para archivos antiguos
-                img = Image.open(ruta)
+            img = Image.open(ruta)
             
             # Redimensionar para el visor
             w_visor = frame_visor.winfo_width() - 100
@@ -186,7 +79,7 @@ def abrir_boveda():
             if w_visor < 100: w_visor = 800
             if h_visor < 100: h_visor = 600
             
-            img.thumbnail((w_visor, h_visor))
+            img.thumbnail((w_visor, h_visor), Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(img)
             
             label_img.configure(image=photo)
@@ -210,7 +103,8 @@ def abrir_boveda():
     cargar_lista()
 
 def confirmar_salida():
-    solicitar_pin(ventana.quit, "AUTORIZAR CIERRE DE SISTEMA")
+    if messagebox.askyesno("CONFIRMAR", "¿Está seguro que desea salir del sistema?"):
+        ventana.quit()
 
 def obtener_ip_local():
     try:
@@ -233,6 +127,26 @@ def actualizar_ventanas():
     win32gui.EnumWindows(enum_win, ventanas)
     combo_ventanas['values'] = ventanas
     if ventanas: combo_ventanas.current(0)
+
+def obtener_modelos_disponibles():
+    # Buscar archivos .pt en el directorio actual
+    modelos = glob.glob("*.pt")
+    if not modelos:
+        return ["No se encontraron modelos .pt"]
+    return modelos
+
+def actualizar_combo_modelos():
+    modelos = obtener_modelos_disponibles()
+    combo_modelo['values'] = modelos
+    if modelos and modelos[0] != "No se encontraron modelos .pt":
+        # Intentar seleccionar yolov10n si existe, sino el primero
+        for i, m in enumerate(modelos):
+            if "yolov10n.pt" in m.lower():
+                combo_modelo.current(i)
+                return
+        combo_modelo.current(0)
+    else:
+        combo_modelo.set("No se encontraron modelos .pt")
 
 def mediamtx_en_ejecucion():
     for proc in psutil.process_iter(['name']):
@@ -293,6 +207,23 @@ def actualizar_controles_por_fuente():
     else:
         entry_url.configure(state='normal')
 
+def importar_modelo():
+    filepath = filedialog.askopenfilename(
+        title="Importar Modelo YOLO (.pt)",
+        filetypes=[("YOLO Models", "*.pt")]
+    )
+    if filepath:
+        # Copiar al directorio actual
+        import shutil
+        filename = os.path.basename(filepath)
+        dest = os.path.join(os.getcwd(), filename)
+        if not os.path.exists(dest):
+            shutil.copy2(filepath, dest)
+            messagebox.showinfo("Éxito", f"Modelo '{filename}' importado correctamente.")
+        else:
+            messagebox.showinfo("Información", f"El modelo '{filename}' ya existe en el directorio.")
+        actualizar_combo_modelos()
+
 def iniciar_mision():
     mision_id = var_mision.get()
     fuente_seleccionada = combo_fuente.get()
@@ -303,15 +234,13 @@ def iniciar_mision():
     usar_telemetria = var_telemetria.get()
     sdk_url = entry_sdk_url.get().strip()
     zona_gps = entry_geocerca.get().strip()
-    sensibilidad_ia = var_sensibilidad.get() / 100.0 # Convertir a 0.4 - 0.9
+    sensibilidad_ia = var_sensibilidad.get() / 100.0
 
-    # Mapeo de modelos
-    mapa_modelos = {
-        "SMALL (Máxima Velocidad)": "yolov8n.pt",
-        "MEDIUM (Equilibrio Operativo)": "yolov8s.pt",
-        "LARGE (Máxima Precisión)": "yolov8m.pt"
-    }
-    archivo_modelo = mapa_modelos.get(modelo_alias, "yolov8n.pt")
+    if not modelo_alias or modelo_alias == "No se encontraron modelos .pt":
+        messagebox.showerror("Error", "Debe seleccionar un modelo de inteligencia artificial válido (.pt).")
+        return
+
+    archivo_modelo = modelo_alias
 
     fuente_final = 0
     es_estatico = False
@@ -366,23 +295,28 @@ def iniciar_mision():
 # --- CLASES DE INTERFAZ MODERNA ---
 class ModernButton(tk.Button):
     def __init__(self, master, **kwargs):
-        self.original_bg = kwargs.get('bg', '#eeb902')
-        self.hover_bg = kwargs.pop('hover_bg', '#ffcc33')
+        self.original_bg = kwargs.get('bg', '#00ffcc')
+        self.hover_bg = kwargs.pop('hover_bg', '#00ccaa')
         kwargs.setdefault('relief', 'flat')
-        kwargs.setdefault('font', ("Helvetica", 11, "bold"))
+        kwargs.setdefault('font', ("Segoe UI", 11, "bold"))
         kwargs.setdefault('cursor', 'hand2')
         kwargs.setdefault('pady', 8)
+        kwargs.setdefault('borderwidth', 0)
         super().__init__(master, **kwargs)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
 
-    def _on_enter(self, e): self.configure(bg=self.hover_bg)
-    def _on_leave(self, e): self.configure(bg=self.original_bg)
+    def _on_enter(self, e): 
+        if self['state'] != 'disabled':
+            self.configure(bg=self.hover_bg)
+    def _on_leave(self, e): 
+        if self['state'] != 'disabled':
+            self.configure(bg=self.original_bg)
 
 # --- CONFIGURACIÓN DE VENTANA ---
 ventana = tk.Tk()
 ventana.title("S.A.V.I.A. v7.0 | Comando de Operaciones (ESMIL)")
-ventana.configure(bg="#0d130d") # Fondo ultra oscuro militar
+ventana.configure(bg="#050805") # Fondo ultra oscuro
 
 # Forzar Pantalla Completa Adaptativa
 try:
@@ -396,119 +330,133 @@ ventana.protocol("WM_DELETE_WINDOW", confirmar_salida)
 # Estilos TTK
 style = ttk.Style()
 style.theme_use('clam')
-style.configure('TCombobox', fieldbackground='#1b2818', background='#1b2818', foreground='white', borderwidth=0)
-style.map('TCombobox', fieldbackground=[('readonly', '#1b2818')], foreground=[('readonly', 'white')])
+style.configure('TCombobox', fieldbackground='#0a0f0a', background='#152015', foreground='#00ffcc', borderwidth=1, bordercolor="#223322", arrowcolor="#00ffcc")
+style.map('TCombobox', fieldbackground=[('readonly', '#0a0f0a')], foreground=[('readonly', '#00ffcc')])
 
 # Contenedor Principal
-main_container = tk.Frame(ventana, bg="#0d130d")
+main_container = tk.Frame(ventana, bg="#050805")
 main_container.place(relx=0.5, rely=0.5, anchor="center")
 
 # Cabecera Institucional
-header_frame = tk.Frame(main_container, bg="#0d130d")
-header_frame.pack(pady=(0, 30))
+header_frame = tk.Frame(main_container, bg="#050805")
+header_frame.pack(pady=(0, 20))
 
-tk.Label(header_frame, text="E J É R C I T O   E C U A T O R I A N O", bg="#0d130d", fg="#eeb902", font=("Helvetica", 14, "bold")).pack()
-tk.Label(header_frame, text="S.A.V.I.A. COMMAND CENTER", bg="#0d130d", fg="#ffffff", font=("Helvetica", 32, "bold")).pack()
-tk.Label(header_frame, text="Sistema de Asistencia Visual e Inteligencia Artificial", bg="#0d130d", fg="#5c7a5c", font=("Helvetica", 12, "italic")).pack()
+tk.Label(header_frame, text="S I S T E M A   C E N T I N E L A", bg="#050805", fg="#00ffcc", font=("Segoe UI", 12, "bold", "tracking")).pack()
+tk.Label(header_frame, text="S.A.V.I.A. COMMAND CENTER", bg="#050805", fg="#ffffff", font=("Segoe UI", 36, "bold")).pack()
+tk.Label(header_frame, text="Sistema de Asistencia Visual e Inteligencia Artificial", bg="#050805", fg="#4b6043", font=("Segoe UI", 12, "italic")).pack(pady=(0, 10))
 
 # Cuerpo de la Interfaz (Grid 2 columnas)
-content_frame = tk.Frame(main_container, bg="#0d130d")
+content_frame = tk.Frame(main_container, bg="#050805")
 content_frame.pack(padx=20)
 
+# Colores del panel
+PANEL_BG = "#0a0f0a"
+BORDER_COLOR = "#152015"
+ACCENT_COLOR = "#00ffcc"
+TEXT_COLOR = "#ffffff"
+TEXT_MUTED = "#8ba38b"
+
 # IZQUIERDA: Configuración de Misión
-left_pane = tk.Frame(content_frame, bg="#0d130d")
+left_pane = tk.Frame(content_frame, bg="#050805")
 left_pane.grid(row=0, column=0, padx=20, sticky="n")
 
 # SECCIÓN 1: MISIÓN
-marco_mision = tk.LabelFrame(left_pane, text=" [1] TIPO DE OPERACIÓN ", bg="#0d130d", fg="#eeb902", font=("Helvetica", 10, "bold"), padx=15, pady=10)
+marco_mision = tk.LabelFrame(left_pane, text=" [1] TIPO DE OPERACIÓN ", bg=PANEL_BG, fg=ACCENT_COLOR, font=("Segoe UI", 10, "bold"), padx=20, pady=15, bd=1, highlightbackground=BORDER_COLOR, highlightthickness=1)
 marco_mision.pack(fill="x", pady=10)
 
 var_mision = tk.IntVar(value=1)
 opts = [("MODO DRON: Patrullaje UAS", 1), ("MODO CENTINELA: Cámara Fija", 2), ("MODO GARITA: Analizador App", 3)]
 for text, val in opts:
-    tk.Radiobutton(marco_mision, text=text, variable=var_mision, value=val, bg="#0d130d", fg="#ffffff", selectcolor="#eeb902", activebackground="#0d130d", activeforeground="#eeb902", font=("Helvetica", 10), command=actualizar_controles_por_modo).pack(anchor="w", pady=5)
+    tk.Radiobutton(marco_mision, text=text, variable=var_mision, value=val, bg=PANEL_BG, fg=TEXT_COLOR, selectcolor="#152015", activebackground=PANEL_BG, activeforeground=ACCENT_COLOR, font=("Segoe UI", 10), command=actualizar_controles_por_modo).pack(anchor="w", pady=5)
 
 # SECCIÓN 2: FUENTE
-marco_fuente = tk.LabelFrame(left_pane, text=" [2] ENTRADA DE VÍDEO ", bg="#0d130d", fg="#eeb902", font=("Helvetica", 10, "bold"), padx=15, pady=10)
+marco_fuente = tk.LabelFrame(left_pane, text=" [2] ENTRADA DE VÍDEO ", bg=PANEL_BG, fg=ACCENT_COLOR, font=("Segoe UI", 10, "bold"), padx=20, pady=15, bd=1, highlightbackground=BORDER_COLOR, highlightthickness=1)
 marco_fuente.pack(fill="x", pady=10)
 
-label_url = tk.Label(marco_fuente, text="Fuente de vídeo:", bg="#0d130d", fg="#aebfbe", font=("Helvetica", 9))
+label_url = tk.Label(marco_fuente, text="Fuente de vídeo:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 9))
 label_url.pack(anchor="w")
 
-combo_fuente = ttk.Combobox(marco_fuente, width=45, state="readonly")
+combo_fuente = ttk.Combobox(marco_fuente, width=45, state="readonly", font=("Segoe UI", 10))
 combo_fuente.pack(pady=5)
 
-entry_url = tk.Entry(marco_fuente, width=35, bg="#1b2818", fg="#eeb902", insertbackground="white", relief="flat", font=("Helvetica", 12, "bold"), justify="center")
+entry_url = tk.Entry(marco_fuente, width=35, bg="#152015", fg=ACCENT_COLOR, insertbackground="white", relief="flat", font=("Consolas", 11), justify="center")
 entry_url.insert(0, f"rtmp://{obtener_ip_local()}:1935/live/dron")
-entry_url.pack(pady=10)
+entry_url.pack(pady=10, ipady=4)
 
-frame_garita = tk.Frame(marco_fuente, bg="#0d130d")
-combo_ventanas = ttk.Combobox(frame_garita, state="readonly", width=30)
+frame_garita = tk.Frame(marco_fuente, bg=PANEL_BG)
+combo_ventanas = ttk.Combobox(frame_garita, state="readonly", width=30, font=("Segoe UI", 10))
 combo_ventanas.pack(side="left")
-btn_refrescar = ModernButton(frame_garita, text="↻", width=3, pady=2, command=actualizar_ventanas)
+btn_refrescar = ModernButton(frame_garita, text="↻", width=3, pady=2, bg="#152015", fg=TEXT_COLOR, hover_bg="#223322", command=actualizar_ventanas)
 btn_refrescar.pack(side="left", padx=5)
 
 # DERECHA: Parámetros IA y Telemetría
-right_pane = tk.Frame(content_frame, bg="#0d130d")
+right_pane = tk.Frame(content_frame, bg="#050805")
 right_pane.grid(row=0, column=1, padx=20, sticky="n")
 
 # SECCIÓN 3: INTELIGENCIA ARTIFICIAL
-marco_ia = tk.LabelFrame(right_pane, text=" [3] NÚCLEO DE INTELIGENCIA ", bg="#0d130d", fg="#eeb902", font=("Helvetica", 10, "bold"), padx=15, pady=10)
+marco_ia = tk.LabelFrame(right_pane, text=" [3] NÚCLEO DE INTELIGENCIA ", bg=PANEL_BG, fg=ACCENT_COLOR, font=("Segoe UI", 10, "bold"), padx=20, pady=15, bd=1, highlightbackground=BORDER_COLOR, highlightthickness=1)
 marco_ia.pack(fill="x", pady=10)
 
-tk.Label(marco_ia, text="Tamaño del Modelo IA:", bg="#0d130d", fg="#aebfbe", font=("Helvetica", 9)).pack(anchor="w")
-combo_modelo = ttk.Combobox(marco_ia, values=["SMALL (Máxima Velocidad)", "MEDIUM (Equilibrio Operativo)", "LARGE (Máxima Precisión)"], state="readonly", width=45)
-combo_modelo.current(0)
-combo_modelo.pack(pady=5)
+tk.Label(marco_ia, text="Seleccione Modelo Base (Archivos .pt locales):", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor="w")
 
-tk.Label(marco_ia, text="Sensibilidad de Detección (%):", bg="#0d130d", fg="#aebfbe", font=("Helvetica", 9)).pack(anchor="w", pady=(10, 0))
+# Sub-frame para combo de modelos y botón de importar
+frame_modelos = tk.Frame(marco_ia, bg=PANEL_BG)
+frame_modelos.pack(fill="x", pady=5)
+
+combo_modelo = ttk.Combobox(frame_modelos, state="readonly", width=35, font=("Segoe UI", 10))
+combo_modelo.pack(side="left", fill="x", expand=True)
+
+btn_importar_modelo = ModernButton(frame_modelos, text="Importar", bg="#152015", fg=TEXT_COLOR, hover_bg="#223322", pady=2, font=("Segoe UI", 9), command=importar_modelo)
+btn_importar_modelo.pack(side="left", padx=(10, 0))
+
+tk.Label(marco_ia, text="Sensibilidad de Detección (%):", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(15, 0))
 var_sensibilidad = tk.DoubleVar(value=60)
-scale_sens = tk.Scale(marco_ia, from_=40, to=90, variable=var_sensibilidad, orient="horizontal", bg="#0d130d", fg="#eeb902", troughcolor="#1b2818", highlightthickness=0, relief="flat", font=("Helvetica", 9, "bold"), activebackground="#eeb902")
+scale_sens = tk.Scale(marco_ia, from_=40, to=90, variable=var_sensibilidad, orient="horizontal", bg=PANEL_BG, fg=ACCENT_COLOR, troughcolor="#152015", highlightthickness=0, relief="flat", font=("Segoe UI", 9, "bold"), activebackground=ACCENT_COLOR)
 scale_sens.pack(fill="x", pady=5)
 
 var_silencio = tk.BooleanVar(value=False)
-tk.Checkbutton(marco_ia, text="Modo Silencioso (Sin Alarmas)", variable=var_silencio, bg="#0d130d", fg="#ffffff", selectcolor="#4b6043", activebackground="#0d130d", font=("Helvetica", 10)).pack(anchor="w", pady=5)
+tk.Checkbutton(marco_ia, text="Modo Silencioso (Sin Alarmas Auditivas)", variable=var_silencio, bg=PANEL_BG, fg=TEXT_COLOR, selectcolor="#152015", activebackground=PANEL_BG, font=("Segoe UI", 10)).pack(anchor="w", pady=5)
 
 # SECCIÓN 4: TELEMETRÍA (Opcional)
-marco_tele = tk.LabelFrame(right_pane, text=" [4] TELEMETRÍA Y GPS ", bg="#0d130d", fg="#eeb902", font=("Helvetica", 10, "bold"), padx=15, pady=10)
+marco_tele = tk.LabelFrame(right_pane, text=" [4] TELEMETRÍA Y GPS ", bg=PANEL_BG, fg=ACCENT_COLOR, font=("Segoe UI", 10, "bold"), padx=20, pady=15, bd=1, highlightbackground=BORDER_COLOR, highlightthickness=1)
 marco_tele.pack(fill="x", pady=10)
 
 var_telemetria = tk.BooleanVar(value=False)
-tk.Checkbutton(marco_tele, text="Habilitar Datos GPS/MAVSDK", variable=var_telemetria, bg="#0d130d", fg="#ffffff", selectcolor="#4b6043", activebackground="#0d130d", font=("Helvetica", 10)).pack(anchor="w")
+tk.Checkbutton(marco_tele, text="Habilitar Datos GPS/MAVSDK", variable=var_telemetria, bg=PANEL_BG, fg=TEXT_COLOR, selectcolor="#152015", activebackground=PANEL_BG, font=("Segoe UI", 10)).pack(anchor="w")
 
-entry_sdk_url = tk.Entry(marco_tele, width=45, bg="#1b2818", fg="white", relief="flat")
+tk.Label(marco_tele, text="URL MAVSDK:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(anchor="w", pady=(5,0))
+entry_sdk_url = tk.Entry(marco_tele, width=45, bg="#152015", fg=TEXT_COLOR, relief="flat", font=("Consolas", 10))
 entry_sdk_url.insert(0, "udp://:14540")
-entry_sdk_url.pack(pady=5)
+entry_sdk_url.pack(pady=(0,5), ipady=3)
 
-entry_geocerca = tk.Entry(marco_tele, width=45, bg="#1b2818", fg="white", relief="flat")
+tk.Label(marco_tele, text="Coordenadas de Geocerca:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(anchor="w", pady=(5,0))
+entry_geocerca = tk.Entry(marco_tele, width=45, bg="#152015", fg=TEXT_COLOR, relief="flat", font=("Consolas", 10))
 entry_geocerca.insert(0, "-1.23456,-78.12345; -1.23500,-78.12400")
-entry_geocerca.pack(pady=5)
+entry_geocerca.pack(pady=(0,5), ipady=3)
 
 # PANEL DE ACCIONES (BOTTOM)
-actions_frame = tk.Frame(main_container, bg="#0d130d")
-actions_frame.pack(pady=30, fill="x")
+actions_frame = tk.Frame(main_container, bg="#050805")
+actions_frame.pack(pady=20, fill="x")
 
-btn_boveda = ModernButton(actions_frame, text="🔒 VISOR DE INTELIGENCIA (BÓVEDA)", bg="#4b6043", fg="white", hover_bg="#5c7a5c", font=("Helvetica", 12, "bold"), command=lambda: solicitar_pin(abrir_boveda, "ACCESO A BÓVEDA TÁCTICA"))
-btn_boveda.pack(side="top", fill="x", padx=100, pady=10)
+# Grid para botones de acción para mejor alineación
+actions_grid = tk.Frame(actions_frame, bg="#050805")
+actions_grid.pack(expand=True)
 
-def proceso_cambiar_pin():
-    configurar_pin_inicial(fuerza=True)
+btn_boveda = ModernButton(actions_grid, text="📁 VISOR DE INTELIGENCIA", bg="#152015", fg="#00ffcc", hover_bg="#223322", font=("Segoe UI", 11, "bold"), width=30, command=abrir_boveda)
+btn_boveda.grid(row=0, column=0, padx=10, pady=10)
 
-btn_cambiar_pin = ModernButton(actions_frame, text="⚙️ CAMBIAR PIN DE COMANDANTE", bg="#1b2818", fg="white", hover_bg="#2c3e2c", font=("Helvetica", 10, "bold"), command=lambda: solicitar_pin(proceso_cambiar_pin, "AUTORIZAR CAMBIO DE PIN"))
-btn_cambiar_pin.pack(side="top", fill="x", padx=100, pady=5)
+btn_iniciar = ModernButton(actions_grid, text="🚀 DESPLEGAR SISTEMA", bg="#00ffcc", fg="#050805", hover_bg="#00ccaa", font=("Segoe UI", 14, "bold"), width=30, pady=12, command=iniciar_mision)
+btn_iniciar.grid(row=1, column=0, padx=10, pady=5)
 
-btn_iniciar = ModernButton(actions_frame, text="🚀 DESPLEGAR SISTEMA", bg="#eeb902", fg="#0d130d", font=("Helvetica", 16, "bold"), command=iniciar_mision)
-btn_iniciar.pack(side="top", fill="x", padx=100, pady=5)
-
-btn_salir = ModernButton(actions_frame, text="✕ SALIR DEL PROGRAMA", bg="#3a0d0d", fg="white", hover_bg="#5a1d1d", font=("Helvetica", 10, "bold"), command=confirmar_salida)
-btn_salir.pack(side="top", pady=15)
+btn_salir = ModernButton(actions_grid, text="✕ SALIR", bg="#2a1111", fg="#ff4444", hover_bg="#3a1818", font=("Segoe UI", 10, "bold"), width=30, command=confirmar_salida)
+btn_salir.grid(row=2, column=0, padx=10, pady=10)
 
 # Inicialización
 actualizar_ventanas()
+actualizar_combo_modelos()
 combo_fuente.bind("<<ComboboxSelected>>", lambda e: actualizar_controles_por_fuente())
 actualizar_controles_por_modo()
 lanzar_mediamtx()
-configurar_pin_inicial()
 limpiar_evidencia_antigua()
 
-ventana.mainloop()
+ventana.mainloop()
