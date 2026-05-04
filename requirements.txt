@@ -1,20 +1,64 @@
-# S.A.T.A. v6.0 - Dependencias
-# Instalación: pip install -r requirements.txt
+@echo off
+title S.A.V.I.A. - Iniciando Sistema de Asistencia Visual
+color 0A
 
-# Core
-ultralytics
-opencv-python
-numpy
-torch
-torchvision
-torchaudio
+echo ===================================================
+echo       Iniciando Sistema S.A.V.I.A.
+echo ===================================================
+echo.
 
-# UI and OS
-psutil
-pywin32
+:: Comprobar si Python esta instalado
+python --version >nul 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Python no esta instalado o no esta en el PATH.
+    echo Por favor, instala Python desde https://www.python.org/downloads/
+    echo Asegurate de marcar la opcion "Add Python to PATH" durante la instalacion.
+    pause
+    exit /b
+)
 
-# Telemetry (Opcional si se usa MAVSDK)
-mavsdk
+:: Comprobar si existe el entorno virtual
+IF NOT EXIST ".venv\Scripts\activate" (
+    echo [+] Creando entorno virtual aislado para no afectar la PC...
+    python -m venv .venv
+    echo [+] Entorno virtual creado exitosamente.
+)
 
-# --- OPCIONAL: Para GPU Universal (AMD/Intel/NVIDIA) ---
-# onnxruntime-directml
+:: Activar entorno virtual
+echo [+] Activando entorno virtual...
+call .venv\Scripts\activate
+
+:: Instalar/Actualizar dependencias
+echo [+] Comprobando e instalando arsenal de software (requirements.txt)...
+echo [+] Si es la primera vez en esta PC, esto tomara unos minutos.
+pip install -r requirements.txt --quiet
+echo [+] Librerias listas.
+
+:: Descargar modelos de IA evadiendo bloqueos de red (SSL)
+echo.
+echo [+] Verificando motores de Inteligencia Artificial...
+
+IF NOT EXIST "yolov10n.pt" (
+    echo [!] Descargando modelo YOLOv10 Nano...
+    curl -L -k -o yolov10n.pt https://github.com/jameslahm/yolov10/releases/download/v1.0/yolov10n.pt
+) ELSE (
+    echo [+] Modelo YOLOv10 Nano detectado en base.
+)
+
+IF NOT EXIST "yolov10s.pt" (
+    echo [!] Descargando modelo YOLOv10 Small...
+    curl -L -k -o yolov10s.pt https://github.com/jameslahm/yolov10/releases/download/v1.0/yolov10s.pt
+) ELSE (
+    echo [+] Modelo YOLOv10 Small detectado en base.
+)
+
+:: Iniciar el programa
+echo.
+echo [+] Lanzando la interfaz tactica de S.A.V.I.A....
+python lanzador.py
+
+:: Si el programa se cierra o falla, pausamos para poder leer la terminal
+echo.
+echo [+] El sistema se ha cerrado correctamente.
+deactivate
+pause
