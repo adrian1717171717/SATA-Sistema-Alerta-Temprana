@@ -1,11 +1,42 @@
-# Entorno virtual y temporales
+# ── Entorno virtual Python ────────────────────────────────
 .venv/
+venv/
+env/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Evidencias tácticas locales
-Evidencia_Seguridad/
-
-# Archivos pesados de IA (YOLO los descarga solo si faltan)
+# ── Modelos YOLO (pesados, se descargan on-demand) ────────
 *.pt
-# Autenticacion local (PIN)
-.sata_auth
+*.onnx
+*.engine
+*.torchscript
+!modelo_tactico_ejemplo.pt.gitkeep
+
+# ── Evidencias tácticas (datos sensibles) ────────────────
+Evidencia_Seguridad/
+Evidencia_Clasificada/
+
+# ── Reportes PDF generados ────────────────────────────────
+REPORTE_SALUTE_*.pdf
+
+# ── IDE y herramientas ────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── MediaMTX (servidor RTMP — binario externo) ────────────
+mediamtx.exe
+mediamtx.yml
+
+# ── Archivos temporales ───────────────────────────────────
+*.tmp
+*.log
+*.bak
+runs/
+datasets/
+ultralytics/

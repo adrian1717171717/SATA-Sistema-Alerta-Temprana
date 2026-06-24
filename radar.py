@@ -1,71 +1,240 @@
-import cv2
-import os
-import time
-import numpy as np
-import torch
-import threading
+# S.A.V.I.A. V7.0 — MOTOR DE VISIÓN TÁCTICA (radar.py)
+# MÓDULO 1: Optimización CUDA/FFMPEG + Escalado de Alta Fidelidad
+# MÓDULO 2: Torreta PID + Kalman (Ultralytics bytetrack) + Arduino Serial
+# ============================================================
+import cv2, os, time, numpy as np, torch, threading, csv, winsound
+import win32gui, win32ui, ctypes, telemetria
 from datetime import datetime
 from ultralytics import YOLO
-import winsound
-import win32gui
-import win32ui
-import ctypes
-import telemetria
-import csv
 
-puntos_zona = []
+# ── Comunicación Serial con Arduino (opcional) ─────────────
+try:
+    import serial
+    SERIAL_DISPONIBLE = True
+except ImportError:
+    SERIAL_DISPONIBLE = False
+    print("[!] pyserial no instalado. Torreta deshabilitada. Ejecute: pip install pyserial")
 
-def registrar_novedad(modo, confianza, frame):
-    """ Guarda una captura estándar y registra la novedad en el CSV """
-    carpeta_evidencia = "Evidencia_Seguridad"
-    if not os.path.exists(carpeta_evidencia): os.makedirs(carpeta_evidencia)
-    
-    fecha_hora = datetime.now()
-    nombre_foto = f"ALERTA_{fecha_hora.strftime('%Y%m%d_%H%M%S')}.jpg"
-    ruta_foto = os.path.join(carpeta_evidencia, nombre_foto)
-    
-    # GUARDADO DE IMAGEN
-    cv2.imwrite(ruta_foto, frame)
-    
-    archivo_csv = os.path.join(carpeta_evidencia, "registro_novedades.csv")
-    existe = os.path.exists(archivo_csv)
-    
-    with open(archivo_csv, mode='a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
+# ── SAHI: Inferencia por parches ───────────────────────────
+try:
+    from sahi import AutoDetectionModel
+    from sahi.predict import get_sliced_prediction
+    SAHI_DISPONIBLE = True
+except ImportError:
+    SAHI_DISPONIBLE = False
+
+# ── Clases tácticas (BGR) ──────────────────────────────────
+CLASES_TACTICAS = {
+    0: {"nombre": "Civil",            "color": (255, 100,   0)},
+    1: {"nombre": "Militar_Jaguar",   "color": (0,   200,   0)},
+    2: {"nombre": "Vehiculo_Civil",   "color": (240, 240, 240)},
+    3: {"nombre": "Vehiculo_Tactico", "color": (0,   140, 255)},
+}
+CLASES_COCO_FALLBACK = [0, 2, 3, 5, 7, 15, 16, 17, 19]
+
+# ── Sirena continua daemon ─────────────────────────────────
+alarma_critica_activa = False
+_hilo_sirena_iniciado = False
+
+def _bucle_sirena():
+    while True:
+        if alarma_critica_activa:
+            try:
+                winsound.Beep(1200, 200); time.sleep(0.15)
+                winsound.Beep(900,  200); time.sleep(0.15)
+            except Exception:
+                time.sleep(0.5)
+        else:
+            time.sleep(0.3)
+
+def _iniciar_hilo_sirena():
+    global _hilo_sirena_iniciado
+    if not _hilo_sirena_iniciado:
+        threading.Thread(target=_bucle_sirena, daemon=True).start()
+        _hilo_sirena_iniciado = True
+
+# ── MÓDULO 1: Escalado de Alta Fidelidad ───────────────────
+def _escalar_hifi(frame, target_w, target_h):
+    """
+    Redimensionado adaptativo de alta fidelidad:
+    - INTER_AREA    : para reducir resolución (menos aliasing)
+    - INTER_LANCZOS4: para ampliar (preserva bordes y nitidez)
+    Mantiene proporción con letterbox negro.
+    """
+    h0, w0 = frame.shape[:2]
+    ratio   = min(target_w / w0, target_h / h0)
+    nw, nh  = int(w0 * ratio), int(h0 * ratio)
+
+    interp  = cv2.INTER_AREA if ratio < 1.0 else cv2.INTER_LANCZOS4
+    resized = cv2.resize(frame, (nw, nh), interpolation=interp)
+
+    canvas  = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+    yo      = (target_h - nh) // 2
+    xo      = (target_w - nw) // 2
+    canvas[yo:yo+nh, xo:xo+nw] = resized
+    return canvas
+
+# ── MÓDULO 2: Torreta PID ─────────────────────────────────
+class TorretaPID:
+    """
+    Controlador PID proporcional para Pan/Tilt de servos.
+    Envía comandos "X,Y\\n" al Arduino vía Serial.
+    El filtro de Kalman es provisto por Ultralytics (bytetrack).
+    """
+    KP = 0.05          # Constante proporcional (ajustar según montura)
+    SERVO_MIN = 0      # Grados mínimos del servo
+    SERVO_MAX = 180    # Grados máximos del servo
+    SERVO_CENTER = 90  # Posición neutral (apuntando al frente)
+
+    def __init__(self, puerto_com="COM3", baudios=9600):
+        self.activa    = False
+        self.ser       = None
+        self.pan_ang   = self.SERVO_CENTER
+        self.tilt_ang  = self.SERVO_CENTER
+        self._lock     = threading.Lock()
+
+        if not SERIAL_DISPONIBLE:
+            print("[!] Torreta PID: pyserial no disponible.")
+            return
+
+        try:
+            self.ser   = serial.Serial(puerto_com, baudios, timeout=0.1)
+            self.activa = True
+            print(f"[+] Torreta PID conectada en {puerto_com} a {baudios} baud.")
+            # Enviar posición neutral al arrancar
+            self._enviar(self.SERVO_CENTER, self.SERVO_CENTER)
+        except Exception as e:
+            print(f"[!] Torreta PID: no se pudo abrir {puerto_com} — {e}")
+
+    @staticmethod
+    def _clamp(val, lo, hi):
+        return max(lo, min(hi, val))
+
+    def calcular_y_enviar(self, cx_objetivo, cy_objetivo, cx_pantalla, cy_pantalla):
+        """
+        Calcula error de posición y aplica control proporcional.
+        Se llama desde el hilo de video — NO bloquea.
+        """
+        if not self.activa or self.ser is None:
+            return
+
+        error_x = cx_objetivo - cx_pantalla   # positivo = objetivo a la derecha
+        error_y = cy_objetivo - cy_pantalla   # positivo = objetivo abajo
+
+        # Ajuste proporcional de ángulos
+        nuevo_pan  = self.pan_ang  + self.KP * error_x
+        nuevo_tilt = self.tilt_ang - self.KP * error_y  # invertir Y (servo mira arriba)
+
+        self.pan_ang  = self._clamp(int(nuevo_pan),  self.SERVO_MIN, self.SERVO_MAX)
+        self.tilt_ang = self._clamp(int(nuevo_tilt), self.SERVO_MIN, self.SERVO_MAX)
+
+        # Enviar en hilo daemon para no bloquear el bucle de video
+        threading.Thread(
+            target=self._enviar,
+            args=(self.pan_ang, self.tilt_ang),
+            daemon=True
+        ).start()
+
+    def _enviar(self, pan, tilt):
+        try:
+            with self._lock:
+                if self.ser and self.ser.is_open:
+                    cmd = f"{pan},{tilt}\n".encode('ascii')
+                    self.ser.write(cmd)
+        except Exception as e:
+            print(f"[!] Error serial torreta: {e}")
+
+    def cerrar(self):
+        if self.ser:
+            try:
+                self._enviar(self.SERVO_CENTER, self.SERVO_CENTER)
+                time.sleep(0.1)
+                self.ser.close()
+            except Exception:
+                pass
+
+# ── Grabación de clip asíncrona ───────────────────────────
+def _grabar_clip(ruta, frames, fps=15.0):
+    if not frames: return
+    h, w = frames[0].shape[:2]
+    writer = cv2.VideoWriter(ruta, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+    for f in frames: writer.write(f)
+    writer.release()
+    print(f"[+] Clip guardado: {ruta}")
+
+# ── Registro CSV SALUTE + JPG ─────────────────────────────
+def registrar_novedad(modo, frame, detecciones_info, coords_gps=None):
+    carpeta = "Evidencia_Seguridad"
+    os.makedirs(carpeta, exist_ok=True)
+    fh = datetime.now()
+    ts = fh.strftime('%Y%m%d_%H%M%S')
+    nombre_foto = f"ALERTA_{ts}.jpg"
+    cv2.imwrite(os.path.join(carpeta, nombre_foto), frame)
+
+    unit_val = ", ".join(sorted(set(d["nombre"] for d in detecciones_info))) or "N/A"
+    loc_val  = (f"LAT {coords_gps[0]:.6f}, LON {coords_gps[1]:.6f}"
+                if coords_gps and coords_gps[0] is not None else "N/A - Fijo")
+    csv_path = os.path.join(carpeta, "registro_novedades.csv")
+    existe   = os.path.exists(csv_path)
+    with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
         if not existe:
-            writer.writerow(["Fecha", "Hora", "Modo de Operación", "Nivel de Confianza (%)", "Archivo de Foto"])
-        writer.writerow([
-            fecha_hora.strftime("%Y-%m-%d"),
-            fecha_hora.strftime("%H:%M:%S"),
-            modo,
-            f"{confianza}%" if isinstance(confianza, (int, float)) else str(confianza),
-            nombre_foto
-        ])
-    print(f"[!] Registro táctico cifrado completado: {nombre_foto}")
+            w.writerow(["Archivo_Imagen", "Fecha", "Hora", "Size",
+                        "Activity", "Location", "Unit", "Equipment"])
+        w.writerow([nombre_foto, fh.strftime("%Y-%m-%d"), fh.strftime("%H:%M:%S"),
+                    len(detecciones_info), f"Alerta en modo {modo}",
+                    loc_val, unit_val,
+                    f"S.A.V.I.A. V7.0 | SAHI+YOLO+PID | {modo}"])
+    print(f"[!] Novedad: {nombre_foto} | {unit_val}")
 
+# ── Captura de ventana (Modo Garita) ─────────────────────
+def capturar_ventana_especifica(titulo):
+    hwnd = win32gui.FindWindow(None, titulo)
+    if not hwnd: return None
+    l, t, r, b = win32gui.GetClientRect(hwnd)
+    w, h = r - l, b - t
+    if w <= 0 or h <= 0: return None
+    hwndDC = win32gui.GetWindowDC(hwnd)
+    mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
+    saveDC = mfcDC.CreateCompatibleDC()
+    bmp    = win32ui.CreateBitmap()
+    bmp.CreateCompatibleBitmap(mfcDC, w, h)
+    saveDC.SelectObject(bmp)
+    ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
+    info   = bmp.GetInfo()
+    data   = bmp.GetBitmapBits(True)
+    img    = np.frombuffer(data, dtype='uint8').reshape((info['bmHeight'], info['bmWidth'], 4))
+    img    = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    win32gui.DeleteObject(bmp.GetHandle())
+    saveDC.DeleteDC(); mfcDC.DeleteDC()
+    win32gui.ReleaseDC(hwnd, hwndDC)
+    return _escalar_hifi(img, 1280, 720)
+
+# ── VideoStream multihilo con aceleración FFMPEG ──────────
 class VideoStream:
-    """ Clase para lectura de video multihilo (Elimina el LAG del búfer de OpenCV) """
     def __init__(self, src, backend=cv2.CAP_ANY):
+        # MÓDULO 1: Forzar latencia cero en streams RTSP/RTMP vía FFMPEG
+        if backend == cv2.CAP_FFMPEG and isinstance(src, str):
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;udp|"
+                "fflags;nobuffer|"
+                "flags;low_delay"
+            )
         self.cap = cv2.VideoCapture(src, backend)
         if backend == cv2.CAP_FFMPEG:
-            # Forzamos latencia mínima en el backend
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        
         self.ret, self.frame = self.cap.read()
         self.stopped = False
-        self.lock = threading.Lock()
+        self.lock    = threading.Lock()
 
     def start(self):
-        t = threading.Thread(target=self.update, args=(), daemon=True)
-        t.start()
+        threading.Thread(target=self.update, daemon=True).start()
         return self
 
     def update(self):
         while not self.stopped:
             if not self.ret:
-                self.stopped = True
-                continue
-            
+                self.stopped = True; return
             ret, frame = self.cap.read()
             with self.lock:
                 self.ret, self.frame = ret, frame
@@ -78,142 +247,145 @@ class VideoStream:
         self.stopped = True
         self.cap.release()
 
-def sonar_alarma():
+# ── HUD: texto con fondo semitransparente ─────────────────
+def _texto_bg(img, txt, pos, fuente, escala, color, grosor=1, pad=5):
+    (tw, th), bl = cv2.getTextSize(txt, fuente, escala, grosor)
+    x, y = pos
+    ov = img.copy()
+    cv2.rectangle(ov, (x-pad, y-th-pad), (x+tw+pad, y+bl+pad), (0, 0, 0), -1)
+    cv2.addWeighted(ov, 0.6, img, 0.4, 0, img)
+    cv2.putText(img, txt, pos, fuente, escala, (0, 0, 0), grosor+1)
+    cv2.putText(img, txt, pos, fuente, escala, color, grosor)
+
+def _es_modelo_tactico(ruta):
     try:
-        winsound.Beep(1500, 100)
-    except:
-        pass
+        m = YOLO(ruta)
+        return m.names.get(1, "").lower() == "militar_jaguar"
+    except Exception:
+        return False
 
-def seleccionar_puntos(event, x, y, flags, param):
-    global puntos_zona
-    if event == cv2.EVENT_LBUTTONDOWN:
-        puntos_zona.append((x, y))
-    elif event == cv2.EVENT_RBUTTONDOWN:
-        puntos_zona = []
+def _inferir_sahi(model, frame, sensibilidad):
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    res = get_sliced_prediction(
+        rgb, model, slice_height=512, slice_width=512,
+        overlap_height_ratio=0.2, overlap_width_ratio=0.2,
+        perform_standard_pred=True, postprocess_type="NMM", verbose=0
+    )
+    out = []
+    for p in res.object_prediction_list:
+        if p.score.value < sensibilidad: continue
+        b = p.bbox
+        out.append({
+            "cls":    p.category.id,
+            "nombre": CLASES_TACTICAS.get(p.category.id, {}).get("nombre", p.category.name),
+            "conf":   p.score.value,
+            "x1": int(b.minx), "y1": int(b.miny),
+            "x2": int(b.maxx), "y2": int(b.maxy),
+            "id":  None,  # tracking ID (solo disponible con model.track)
+        })
+    return out
 
-def dibujar_texto_legible(imagen, texto, posicion, fuente, escala, color, grosor=1):
-    cv2.putText(imagen, texto, posicion, fuente, escala, (0, 0, 0), grosor + 1)
-    cv2.putText(imagen, texto, posicion, fuente, escala, color, grosor)
+# ── FUNCIÓN PRINCIPAL ─────────────────────────────────────
+def iniciar_radar(
+    fuente_video=0, modelo_ia='yolov8n.pt',
+    modo_estatico=True, modo_garita=False,
+    modo_silencioso_global=False,
+    usar_telemetria=False, sdk_url=None,
+    zona_gps=None, sensibilidad=0.6,
+    puerto_arduino="COM3", usar_torreta=False
+):
+    global alarma_critica_activa
+    os.makedirs("Evidencia_Seguridad", exist_ok=True)
+    _iniciar_hilo_sirena()
 
-def capturar_ventana_especifica(titulo_ventana):
-    hwnd = win32gui.FindWindow(None, titulo_ventana)
-    if not hwnd: return None 
-    left, top, right, bot = win32gui.GetClientRect(hwnd)
-    w, h = right - left, bot - top
-    if w <= 0 or h <= 0: return None
-    hwndDC = win32gui.GetWindowDC(hwnd)
-    mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
-    saveDC = mfcDC.CreateCompatibleDC()
-    saveBitMap = win32ui.CreateBitmap()
-    saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
-    saveDC.SelectObject(saveBitMap)
-    ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
-    bmpinfo = saveBitMap.GetInfo()
-    bmpstr = saveBitMap.GetBitmapBits(True)
-    img = np.frombuffer(bmpstr, dtype='uint8').reshape((bmpinfo['bmHeight'], bmpinfo['bmWidth'], 4))
-    img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-    win32gui.DeleteObject(saveBitMap.GetHandle())
-    saveDC.DeleteDC()
-    mfcDC.DeleteDC()
-    win32gui.ReleaseDC(hwnd, hwndDC)
-    if w > 1280 or h > 720:
-        img = cv2.resize(img, (1280, 720))
-    return img
+    # MÓDULO 1: CUDA
+    dispositivo = 'cuda' if torch.cuda.is_available() else 'cpu'
+    dev_int     = 0 if dispositivo == 'cuda' else 'cpu'
+    if dispositivo == 'cuda':
+        torch.backends.cudnn.benchmark    = True
+        torch.backends.cudnn.deterministic = False
+        print("[+] CUDA + CuDNN Benchmark: ACTIVADO")
 
-def parse_zona_gps(zona_gps):
-    if not zona_gps: return None
-    coords = []
-    try:
-        for p in zona_gps.split(";"):
-            p = p.strip()
-            if not p: continue
-            lat, lon = p.split(",")
-            coords.append((float(lat.strip()), float(lon.strip())))
-    except: return None
-    return coords
+    usar_tactico = _es_modelo_tactico(modelo_ia)
+    print(f"[+] Modo clases: {'TACTICO' if usar_tactico else 'COCO-FALLBACK'}")
 
-def punto_en_poligono(point, polygon):
-    x, y = point
-    inside = False
-    n = len(polygon)
-    for i in range(n):
-        x1, y1 = polygon[i]
-        x2, y2 = polygon[(i + 1) % n]
-        if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1):
-            inside = not inside
-    return inside
+    # ── Motor de inferencia ────────────────────────────────
+    sahi_model = None
+    model_yolo = None   # Para SAHI-fallback o tracking
 
-def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, modo_garita=False, modo_silencioso_global=False, usar_telemetria=False, sdk_url=None, zona_gps=None, sensibilidad=0.6):
-    carpeta_evidencia = "Evidencia_Seguridad"
-    if not os.path.exists(carpeta_evidencia): os.makedirs(carpeta_evidencia)
-    
-    print(f"\n[+] Cargando modelo táctico: {modelo_ia}")
-    dispositivo = 0 if torch.cuda.is_available() else 'cpu'
-    
-    # MÁXIMA CAPACIDAD NVIDIA (Si hay CUDA disponible)
-    if dispositivo == 0:
-        torch.backends.cudnn.benchmark = True  # Acelera convoluciones en tamaños estables
-        torch.backends.cudnn.deterministic = False # Permite elegir el algoritmo más rápido
-        print("[+] Optimización Extrema NVIDIA (CUDA+CuDNN Benchmark): ACTIVADA")
+    if SAHI_DISPONIBLE:
+        sahi_model = AutoDetectionModel.from_pretrained(
+            model_type="yolov8", model_path=modelo_ia,
+            confidence_threshold=sensibilidad, device=dispositivo
+        )
+        print("[+] Motor: SAHI 512x512 / overlap 20%")
+    else:
+        # Sin SAHI: usar YOLO con track + bytetrack (Kalman interno)
+        model_yolo = YOLO(modelo_ia)
+        if dispositivo == 'cuda':
+            model_yolo.to('cuda')
+            # Calentamiento FP16
+            model_yolo.predict(
+                np.zeros((640, 640, 3), dtype=np.uint8),
+                device=dev_int, verbose=False, half=True
+            )
+        print("[+] Motor: YOLO+ByteTrack (Kalman interno de Ultralytics)")
 
-    model = YOLO(modelo_ia)
-    if dispositivo == 0: 
-        model.to('cuda')
-        # OPTIMIZACIÓN: Calentamiento de GPU para evitar tirones iniciales
-        dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-        model.predict(dummy_frame, device=dispositivo, verbose=False, half=True)
+    # ── MÓDULO 2: Torreta PID ──────────────────────────────
+    torreta = None
+    if usar_torreta and modo_estatico and not modo_garita:
+        torreta = TorretaPID(puerto_com=puerto_arduino, baudios=9600)
 
-    ultimo_guardado = 0
-    tiempo_anterior = 0
-    alarma_silenciada_temporal = False
-    silencio_global = modo_silencioso_global
-    cv2.namedWindow("S.A.V.I.A. - Visor de Inteligencia Artificial", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-    # Maximizar ventana manteniendo la barra de tareas y el botón X
-    hwnd = win32gui.FindWindow(None, "S.A.V.I.A. - Visor de Inteligencia Artificial")
-    if hwnd:
-        win32gui.ShowWindow(hwnd, 3) # 3 = SW_MAXIMIZE
-    
-    if modo_estatico and not modo_garita: cv2.setMouseCallback("S.A.V.I.A. - Visor de Inteligencia Artificial", seleccionar_puntos)
-
-    telemetria_data = None
-    geocerca_coords = parse_zona_gps(zona_gps) if zona_gps else None
+    # ── Telemetría GPS ─────────────────────────────────────
+    tele = None
     if usar_telemetria:
-        telemetria_data = telemetria.DroneTelemetry(sdk_url or "udp://:14540")
-        telemetria_data.start()
+        tele = telemetria.DroneTelemetry(sdk_url or "udp://:14540")
+        tele.start()
 
+    # ── Conexión de video ──────────────────────────────────
     vs = None
     if not modo_garita:
-        attempts = 0
-        while attempts < 30:
-            attempts += 1
-            # Usamos FFMPEG para streams y CAP_ANY para webcams
+        for i in range(1, 31):
             backend = cv2.CAP_FFMPEG if isinstance(fuente_video, str) else cv2.CAP_ANY
             vs = VideoStream(fuente_video, backend)
             if vs.ret: break
             vs.release()
-            print(f"[+] Esperando dron... ({attempts}/30)")
+            print(f"[+] Esperando fuente... ({i}/30)")
             time.sleep(1)
         if not vs or not vs.ret:
-            print("[!] Error de conexión."); return
-        vs.start() # Iniciamos el hilo de lectura
+            print("[!] Error de conexión con la fuente de video.")
+            return
+        vs.start()
 
-    CLASES_INTERES = [0, 2, 3, 5, 7, 15, 16, 17, 19]
-    modo_txt = "DRON" if not modo_estatico else ("GARITA" if modo_garita else "CENTINELA")
+    # ── Ventana OpenCV ─────────────────────────────────────
+    TITULO = "S.A.V.I.A. - Visor de Inteligencia Artificial"
+    cv2.namedWindow(TITULO, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    hwnd = win32gui.FindWindow(None, TITULO)
+    if hwnd: win32gui.ShowWindow(hwnd, 3)
+
+    modo_txt   = "DRON" if not modo_estatico else ("GARITA" if modo_garita else "CENTINELA")
+    silencioso = modo_silencioso_global
+    ult_guard  = 0; t_ant = 0; frame_cnt = 0
+    frame_skip = 2 if dispositivo == 'cpu' else 1
+    ult_det    = []
+    FPS_CLIP   = 15; MAX_BUF = FPS_CLIP * 5
+    buf_clip   = []; grabando = False; clip_rest = 0
+    HUD        = cv2.FONT_HERSHEY_SIMPLEX
+
+    # Centro de pantalla para PID
+    CENTRO_X, CENTRO_Y = 640, 360
 
     while True:
+        # ── Captura ────────────────────────────────────────
         if modo_garita:
             frame = capturar_ventana_especifica(fuente_video)
         else:
-            exito, frame = vs.read()
-            if not exito:
-                # RECONEXIÓN AUTOMÁTICA
-                black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-                msg = "[!] PERDIDA DE SENAL DE TELEMETRIA - RECONECTANDO..."
-                cv2.putText(black_frame, msg, (100, 360), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                cv2.imshow("S.A.V.I.A. - Visor de Inteligencia Artificial", black_frame)
-                cv2.waitKey(2000)
-                
-                print("[!] Intentando reconectar stream...")
+            ok, frame = vs.read()
+            if not ok:
+                black = np.zeros((720, 1280, 3), dtype=np.uint8)
+                cv2.putText(black, "[!] PERDIDA DE SENAL - RECONECTANDO...",
+                            (80, 360), HUD, 0.9, (0, 0, 255), 2)
+                cv2.imshow(TITULO, black); cv2.waitKey(2000)
                 vs.release()
                 backend = cv2.CAP_FFMPEG if isinstance(fuente_video, str) else cv2.CAP_ANY
                 vs = VideoStream(fuente_video, backend)
@@ -224,133 +396,173 @@ def iniciar_radar(fuente_video=0, modelo_ia='yolov8n.pt', modo_estatico=True, mo
             if modo_garita: break
             continue
 
-        # AJUSTE DE RESOLUCIÓN Y FORMATO DE CÁMARA (1280x720) SIN ESTIRAR
-        h_orig, w_orig = frame.shape[:2]
-        canvas_w, canvas_h = 1280, 720
-        aspect = w_orig / h_orig
-        target_aspect = canvas_w / canvas_h
-        
-        if aspect > target_aspect:
-            new_w = canvas_w
-            new_h = int(canvas_w / aspect)
+        # ── MÓDULO 1: Escalado de Alta Fidelidad ──────────
+        frame = _escalar_hifi(frame, 1280, 720)
+
+        # ── Buffer de clip ─────────────────────────────────
+        if grabando:
+            buf_clip.append(frame.copy())
+            clip_rest -= 1
+            if clip_rest <= 0: grabando = False
+
+        # ── Inferencia con frame-skip ──────────────────────
+        frame_cnt += 1
+        if frame_cnt % (frame_skip + 1) == 0:
+            if sahi_model:
+                ult_det = _inferir_sahi(sahi_model, frame, sensibilidad)
+
+            elif model_yolo:
+                clases = list(CLASES_TACTICAS.keys()) if usar_tactico else CLASES_COCO_FALLBACK
+                # MÓDULO 2: model.track con bytetrack (Kalman interno)
+                try:
+                    rs = model_yolo.track(
+                        frame, classes=clases, conf=sensibilidad,
+                        persist=True, tracker="bytetrack.yaml",
+                        verbose=False,
+                        device=dev_int,
+                        half=(dispositivo == 'cuda')   # FP16 MÓDULO 1
+                    )
+                except Exception:
+                    # bytetrack.yaml no encontrado — fallback a predict
+                    rs = model_yolo.predict(
+                        frame, classes=clases, conf=sensibilidad,
+                        verbose=False, device=dev_int,
+                        half=(dispositivo == 'cuda')
+                    )
+
+                ult_det = []
+                for r in rs:
+                    if not r.boxes: continue
+                    for b in r.boxes:
+                        ci = int(b.cls[0])
+                        x1, y1, x2, y2 = map(int, b.xyxy[0])
+                        track_id = int(b.id[0]) if b.id is not None else None
+                        ult_det.append({
+                            "cls":    ci,
+                            "nombre": CLASES_TACTICAS.get(ci, {}).get("nombre", f"cls_{ci}"),
+                            "conf":   float(b.conf[0]),
+                            "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                            "id":     track_id,
+                        })
+
+        # ── Dibujar detecciones + PID ──────────────────────
+        amenazas = []; hay_amenaza = False
+        objetivo_pid = None  # Primera amenaza válida para la torreta
+
+        for d in ult_det:
+            ci = d["cls"]
+            if usar_tactico:
+                col = CLASES_TACTICAS.get(ci, {"color": (128, 128, 128)})["color"]
+                es  = (ci == 1)  # Solo Militar_Jaguar activa torreta
+            else:
+                es  = (ci == 0)
+                col = (0, 200, 50) if ci == 0 else ((255, 150, 0) if ci in [2,3,5,7] else (0, 220, 220))
+
+            if es:
+                hay_amenaza = True
+                amenazas.append(d)
+                if objetivo_pid is None:
+                    objetivo_pid = d  # Priorizar primer objetivo detectado
+
+            # Bounding box
+            cv2.rectangle(frame, (d["x1"], d["y1"]), (d["x2"], d["y2"]), col, 2)
+            label = f"{d['nombre']} {int(d['conf']*100)}%"
+            if d.get("id") is not None:
+                label += f" #{d['id']}"
+            _texto_bg(frame, label, (d["x1"], max(d["y1"]-12, 15)), HUD, 0.55, col)
+
+        # ── MÓDULO 2: Enviar comando PID a torreta ─────────
+        if torreta and objetivo_pid:
+            cx_obj = (objetivo_pid["x1"] + objetivo_pid["x2"]) // 2
+            cy_obj = (objetivo_pid["y1"] + objetivo_pid["y2"]) // 2
+            torreta.calcular_y_enviar(cx_obj, cy_obj, CENTRO_X, CENTRO_Y)
+
+            # Dibujar retícula de seguimiento
+            cv2.line(frame, (CENTRO_X, CENTRO_Y), (cx_obj, cy_obj), (0, 255, 255), 1)
+            cv2.circle(frame, (cx_obj, cy_obj), 8, (0, 255, 255), 2)
+            cv2.drawMarker(frame, (CENTRO_X, CENTRO_Y),
+                           (0, 255, 255), cv2.MARKER_CROSS, 20, 1)
+
+        # ── Sirena ─────────────────────────────────────────
+        alarma_critica_activa = hay_amenaza and not silencioso
+
+        # ── Registro (cooldown 15s) ────────────────────────
+        if hay_amenaza and (time.time() - ult_guard > 15):
+            coords = None
+            if tele:
+                try:
+                    pos = tele.get_position()
+                    coords = (pos.latitude_deg, pos.longitude_deg) if pos else None
+                except Exception:
+                    pass
+            snap = frame.copy()
+            threading.Thread(
+                target=registrar_novedad,
+                args=(modo_txt, snap, amenazas, coords),
+                daemon=True
+            ).start()
+            buf_clip.clear(); grabando = True; clip_rest = MAX_BUF
+            ts_clip = datetime.now().strftime('%Y%m%d_%H%M%S')
+            def _lanzar_clip(ref_buf, ts, fps):
+                while grabando: time.sleep(0.05)
+                _grabar_clip(
+                    os.path.join("Evidencia_Seguridad", f"CLIP_{ts}.mp4"),
+                    list(ref_buf), fps
+                )
+            threading.Thread(
+                target=_lanzar_clip,
+                args=(buf_clip, ts_clip, FPS_CLIP),
+                daemon=True
+            ).start()
+            ult_guard = time.time()
+
+        # ── HUD ────────────────────────────────────────────
+        t_now = time.time()
+        fps = 1.0 / (t_now - t_ant) if t_ant else 0
+        t_ant = t_now
+        motor = "SAHI+YOLO" if sahi_model else "YOLO+ByteTrack"
+        torreta_txt = f" | TORRETA: PAN={torreta.pan_ang} TILT={torreta.tilt_ang}" if torreta and torreta.activa else ""
+
+        _texto_bg(frame,
+                  f"S.A.V.I.A. V7.0 | {modo_txt} | {modelo_ia} | {motor} | {int(fps)} FPS{torreta_txt}",
+                  (15, 28), HUD, 0.55, (180, 255, 100))
+
+        if hay_amenaza:
+            cls_txt = ", ".join(sorted(set(d["nombre"] for d in amenazas)))
+            _texto_bg(frame, f"ALERTA CRITICA: {cls_txt}", (15, 62), HUD, 0.62, (40, 40, 255))
         else:
-            new_h = canvas_h
-            new_w = int(canvas_h * aspect)
-            
-        frame_resized = cv2.resize(frame, (new_w, new_h))
-        frame_padded = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-        y_offset = (canvas_h - new_h) // 2
-        x_offset = (canvas_w - new_w) // 2
-        frame_padded[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = frame_resized
-        
-        frame = frame_padded
-        h_proc, w_proc = 720, 1280
-        
-        # INFERENCIA OPTIMIZADA (FP16 si hay GPU)
-        # half=True reduce el uso de memoria y acelera el proceso en RTX
-        resultados = model.track(frame, persist=True, classes=CLASES_INTERES, conf=sensibilidad, verbose=False, device=dispositivo, half=(dispositivo == 0))
+            _texto_bg(frame, "SISTEMA OPERATIVO - SIN AMENAZAS", (15, 62), HUD, 0.62, (0, 220, 150))
 
-        total_personas, intrusos, amenaza_critica = 0, 0, False
-        
-        if modo_estatico and not modo_garita and len(puntos_zona) > 0:
-            for pt in puntos_zona: cv2.circle(frame, pt, 5, (0, 0, 255), -1)
-            if len(puntos_zona) > 1:
-                pts = np.array(puntos_zona, np.int32).reshape((-1, 1, 2))
-                cv2.polylines(frame, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
+        nav = "[C] CAPTURA  [T] TORRETA ON/OFF  [M] SILENCIAR  [V] MENU  [Q] SALIR"
+        (tw, _), _ = cv2.getTextSize(nav, HUD, 0.48, 1)
+        _texto_bg(frame, nav, (1265 - tw, 710), HUD, 0.48, (180, 180, 180))
 
-        for r in resultados:
-            if r.boxes:
-                for caja in r.boxes:
-                    x1, y1, x2, y2 = map(int, caja.xyxy[0])
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    conf, cls = int(caja.conf[0] * 100), int(caja.cls[0])
+        cv2.imshow(TITULO, frame)
+        k = cv2.waitKey(1) & 0xFF
 
-                    if cls == 0:
-                        tipo, col = "PERSONA", (0, 255, 0)
-                        total_personas += 1
-                        # Lógica de geocerca
-                        if modo_estatico and not modo_garita:
-                            if len(puntos_zona) > 2 and cv2.pointPolygonTest(np.array(puntos_zona, np.int32), (cx, cy), False) >= 0:
-                                col, amenaza_critica = (0, 0, 255), True
-                                intrusos += 1
-                        else: col, amenaza_critica, intrusos = (0, 0, 255), True, intrusos + 1
-                    elif cls in [2,3,5,7]: tipo, col = "VEHICULO", (255, 150, 0)
-                    else: tipo, col = "ANIMAL", (0, 255, 255)
-
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), col, 2)
-                    dibujar_texto_legible(frame, f"{tipo} {conf}%", (x1, y1 - 10), cv2.FONT_HERSHEY_DUPLEX, 0.6, col, 1)
-
-        # Alarmas asíncronas y Registro de Evidencia
-        if amenaza_critica:
-            if not silencio_global and not alarma_silenciada_temporal:
-                threading.Thread(target=sonar_alarma, daemon=True).start()
-                alarma_silenciada_temporal = True 
-            
-            # MÓDULO DE BITÁCORA AUTOMÁTICA (Cooldown 15s)
-            if time.time() - ultimo_guardado > 15:
-                # Buscar confianza máxima entre intrusos
-                conf_max = 0
-                for r in resultados:
-                    if r.boxes:
-                        for b in r.boxes:
-                            if int(b.cls[0]) == 0:
-                                c = int(b.conf[0] * 100)
-                                if c > conf_max: conf_max = c
-                
-                threading.Thread(target=registrar_novedad, args=(modo_txt, conf_max, frame.copy()), daemon=True).start()
-                ultimo_guardado = time.time()
-        elif not amenaza_critica: alarma_silenciada_temporal = False
-
-        # HUD TÁCTICO MINIMALISTA - Panel Superior Pequeño
-        panel = frame.copy()
-        alto_panel = 80
-        cv2.rectangle(panel, (0, 0), (w_proc, alto_panel), (10, 15, 10), -1)
-        cv2.addWeighted(panel, 0.85, frame, 0.15, 0, frame)
-
-        t_act = time.time()
-        fps = 1 / (t_act - tiempo_anterior) if tiempo_anterior > 0 else 0
-        tiempo_anterior = t_act
-        
-        # Estilo Minimalista
-        fuente = cv2.FONT_HERSHEY_SIMPLEX
-        escala = 0.65
-        
-        # Línea 1: Info General (Izquierda)
-        info_txt = f"SISTEMA CENTINELA | MODO: {modo_txt} | MODELO: {modelo_ia} | {int(fps)} FPS"
-        dibujar_texto_legible(frame, info_txt, (20, 30), fuente, escala, (204, 255, 0), 1) # Cyan-ish/Neon Green
-        
-        # Línea 2: Estado (Izquierda)
-        estado_txt = "ALERTA CRITICA - INTRUSO DETECTADO" if amenaza_critica else "SISTEMA OPERATIVO Y VIGILANDO"
-        color_estado = (0, 0, 255) if amenaza_critica else (0, 255, 204) # Neon Green when ok, Red when threat
-        dibujar_texto_legible(frame, f"ESTADO: {estado_txt} | OBJETIVOS: {intrusos}", (20, 65), fuente, escala, color_estado, 1)
-
-        # Instrucciones de Navegación (Derecha)
-        nav_txt_1 = "[C] FOTO MANUAL | [V] MENU | [Q] SALIR"
-        if modo_estatico and not modo_garita:
-            nav_txt_2 = "[M] SILENCIAR | [Click Izq] ZONA | [Click Der] BORRAR"
-        else:
-            nav_txt_2 = "[M] SILENCIAR ALARMAS"
-        
-        # Calcular ancho del texto para alinear a la derecha
-        (tw1, _), _ = cv2.getTextSize(nav_txt_1, fuente, escala, 1)
-        (tw2, _), _ = cv2.getTextSize(nav_txt_2, fuente, escala, 1)
-        
-        dibujar_texto_legible(frame, nav_txt_1, (w_proc - tw1 - 20, 30), fuente, escala, (200, 200, 200), 1)
-        dibujar_texto_legible(frame, nav_txt_2, (w_proc - tw2 - 20, 65), fuente, escala, (0, 204, 255), 1)
-
-        cv2.imshow("S.A.V.I.A. - Visor de Inteligencia Artificial", frame)
-        tecla = cv2.waitKey(1) & 0xFF
-        if tecla in [ord('v'), ord('V')]: 
+        if k in [ord('v'), ord('V')]:
             print("[+] Regresando al Comando Central...")
             break
-        elif tecla in [ord('q'), ord('Q')]: 
-            print("[!] Cierre de emergencia solicitado.")
+        elif k in [ord('q'), ord('Q')]:
             os._exit(0)
-        elif tecla in [ord('c'), ord('C')]:
-            threading.Thread(target=registrar_novedad, args=(modo_txt, "MANUAL", frame.copy()), daemon=True).start()
-        elif tecla in [ord('m'), ord('M')]: 
-            silencio_global = not silencio_global
-            print(f"[+] Silencio Global: {'ON' if silencio_global else 'OFF'}")
+        elif k in [ord('c'), ord('C')]:
+            threading.Thread(
+                target=registrar_novedad,
+                args=(modo_txt, frame.copy(),
+                      ult_det or [{"nombre": "MANUAL", "conf": 1.0}], None),
+                daemon=True
+            ).start()
+        elif k in [ord('m'), ord('M')]:
+            silencioso = not silencioso
+            alarma_critica_activa = False
+            print(f"[+] Silencio: {'ON' if silencioso else 'OFF'}")
+        elif k in [ord('t'), ord('T')]:
+            if torreta:
+                torreta.activa = not torreta.activa
+                print(f"[+] Torreta PID: {'ACTIVA' if torreta.activa else 'PAUSADA'}")
 
-    if vs: vs.release()
+    # ── Limpieza ───────────────────────────────────────────
+    alarma_critica_activa = False
+    if torreta: torreta.cerrar()
+    if vs:      vs.release()
     cv2.destroyAllWindows()
