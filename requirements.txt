@@ -1,64 +1,40 @@
-@echo off
-title S.A.V.I.A. - Iniciando Sistema de Asistencia Visual
-color 0A
+# S.A.V.I.A. V7.0 — Dependencias del Sistema
+# Instalación: pip install -r requirements.txt
+# NOTA: Para GPU NVIDIA instalar PyTorch con CUDA desde https://pytorch.org
 
-echo ===================================================
-echo       Iniciando Sistema S.A.V.I.A.
-echo ===================================================
-echo.
+# ── Core IA y Visión ──────────────────────────────────────
+ultralytics>=8.3.0
+opencv-python>=4.10.0
+numpy>=1.26.0
+Pillow>=10.3.0
 
-:: Comprobar si Python esta instalado
-python --version >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Python no esta instalado o no esta en el PATH.
-    echo Por favor, instala Python desde https://www.python.org/downloads/
-    echo Asegurate de marcar la opcion "Add Python to PATH" durante la instalacion.
-    pause
-    exit /b
-)
+# ── PyTorch (CPU base)
+# Para GPU CUDA 12.1: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
 
-:: Comprobar si existe el entorno virtual
-IF NOT EXIST ".venv\Scripts\activate" (
-    echo [+] Creando entorno virtual aislado para no afectar la PC...
-    python -m venv .venv
-    echo [+] Entorno virtual creado exitosamente.
-)
+# ── Inferencia SAHI (detección en alta resolución / drones 4K) ──
+sahi>=0.11.19
 
-:: Activar entorno virtual
-echo [+] Activando entorno virtual...
-call .venv\Scripts\activate
+# ── UI y Sistema Operativo Windows ────────────────────────
+psutil>=5.9.0
+pywin32>=306
 
-:: Instalar/Actualizar dependencias
-echo [+] Comprobando e instalando arsenal de software (requirements.txt)...
-echo [+] Si es la primera vez en esta PC, esto tomara unos minutos.
-pip install -r requirements.txt --quiet
-echo [+] Librerias listas.
+# ── Reportes Tácticos PDF (offline) ──────────────────────
+fpdf2>=2.7.9
 
-:: Descargar modelos de IA evadiendo bloqueos de red (SSL)
-echo.
-echo [+] Verificando motores de Inteligencia Artificial...
+# ── Mapas Geoespaciales ──────────────────────────────────
+folium>=0.16.0
 
-IF NOT EXIST "yolov10n.pt" (
-    echo [!] Descargando modelo YOLOv10 Nano...
-    curl -L -k -o yolov10n.pt https://github.com/jameslahm/yolov10/releases/download/v1.0/yolov10n.pt
-) ELSE (
-    echo [+] Modelo YOLOv10 Nano detectado en base.
-)
+# ── Control de Torreta Arduino (opcional) ────────────────
+# pip install pyserial
+# pyserial>=3.5
 
-IF NOT EXIST "yolov10s.pt" (
-    echo [!] Descargando modelo YOLOv10 Small...
-    curl -L -k -o yolov10s.pt https://github.com/jameslahm/yolov10/releases/download/v1.0/yolov10s.pt
-) ELSE (
-    echo [+] Modelo YOLOv10 Small detectado en base.
-)
+# ── Telemetría MAVLink (opcional, solo Savia Activo) ─────
+# pip install pymavlink mavsdk
+# pymavlink
+# mavsdk
 
-:: Iniciar el programa
-echo.
-echo [+] Lanzando la interfaz tactica de S.A.V.I.A....
-python lanzador.py
-
-:: Si el programa se cierra o falla, pausamos para poder leer la terminal
-echo.
-echo [+] El sistema se ha cerrado correctamente.
-deactivate
-pause
+# ── GPU AMD/Intel alternativa (sin CUDA) ─────────────────
+# onnxruntime-directml
